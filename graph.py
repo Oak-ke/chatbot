@@ -3,7 +3,7 @@ import re
 from langgraph.graph import StateGraph
 from typing import TypedDict
 from langchain_core.messages import HumanMessage
-from utils import detect_language
+from utils import detect_language, translate_text
 
 class State(TypedDict):
     question: str
@@ -40,13 +40,7 @@ def detect_lan_and_translate(state: State, llm):
             "language": "en",
         }
         
-    prompt = (
-        "Translate the following Arabic text to English.\n"
-        "Return ONLY the translation.\n\n"
-        f"Text:\n{text}"
-    )
-    
-    translated = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+    translated, _ = translate_text(text, llm, target_lang="English")
     
     return {
         "question": translated,

@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify, render_template
 from graph import build_graph
 from llm import llama_llm
 from langchain_core.messages import HumanMessage
-from utils import detect_language
+from utils import detect_language, translate_text
 
 app = Flask(__name__)
 llm = llama_llm()
@@ -35,17 +35,9 @@ def translate():
     if not text:
         return jsonify({"error": "No text provided"}), 400
     
-    source_lang = detect_language(text)
-    target_lang = "English" if source_lang == "ar" else "Arabic"
-
-    prompt = (
-        f"Translate the following text to {target_lang}.\n"
-        "Return ONLY the translation.\n\n"
-        f"Text:\n{text}"
-    )
+    translated, _ = translate_text(text, llm)
     
-    result = llm.invoke([HumanMessage(content=prompt)]).content.strip()
-    return jsonify({"translation": result})
+    return jsonify({"translation": translated})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True, port=5000)
