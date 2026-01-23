@@ -3,6 +3,7 @@ import re
 from langgraph.graph import StateGraph
 from typing import TypedDict
 from langchain_core.messages import HumanMessage
+from utils import detect_language
 
 class State(TypedDict):
     question: str
@@ -29,20 +30,19 @@ INTENT_MAP = {
     
 }
 
-ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
-
 def detect_lan_and_translate(state: State, llm):
     text = state["question"]
+    lang = detect_language(text)
         
-    if ARABIC_RE.search(text):
+    if lang == "en":
         return {
             "question": text,
-            "language": "ar",
+            "language": "en",
         }
         
     prompt = (
-        "Translate the following text to Arabic.\n"
-        "Return ONLY the Arabic translation.\n\n"
+        "Translate the following Arabic text to English.\n"
+        "Return ONLY the translation.\n\n"
         f"Text:\n{text}"
     )
     
@@ -50,7 +50,7 @@ def detect_lan_and_translate(state: State, llm):
     
     return {
         "question": translated,
-        "language": "en"
+        "language": "ar"
     }
 
 def detect_intent(state: State, llm):
@@ -111,8 +111,8 @@ def generate_answer(state: State, llm):
         f"Question:\n{state['question']}"
     )
 
-    response = llm.invoke([HumanMessage(content=prompt)])
-    return {"answer": response.content.strip()}
+    response = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+    return {"answer": response}
 
 
 def build_graph(llm):
