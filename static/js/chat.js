@@ -47,8 +47,7 @@ function addBotMessage(text) {
   btn.className = "translate-btn";
   btn.textContent = "Translate";
 
-  let translated = false;
-  let originalText = text;
+  let currentLang = "en"; // default language
 
   btn.onclick = async () => {
     btn.disabled = true;
@@ -59,9 +58,12 @@ function addBotMessage(text) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: translated ? originalText : text // Use full text for translation
+          text: textSpan.textContent,
+          target_lang: currentLang === "en" ? "Arabic" : "English"
         })
       });
+
+      if (!res.ok) throw new Error("Translation API error");
 
       const data = await res.json();
 
@@ -69,12 +71,14 @@ function addBotMessage(text) {
       const graphRegex = /\/static\/graphs\/[^\s]+\.png/gi;
       textSpan.textContent = data.translation.replace(graphRegex, "").trim();
 
-      translated = !translated;
+      currentLang = currentLang === "en" ? "ar" : "en";
+      btn.textContent = currentLang === "en" ? "Translate" : "Original";
+
     } catch (err) {
       alert("Translation failed!");
+      console.error(err);
     } finally {
       btn.disabled = false;
-      btn.textContent = translated ? "Original" : "Translate";
     }
   };
 
