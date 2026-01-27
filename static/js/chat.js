@@ -22,11 +22,14 @@ function addBotMessage(text) {
   const content = document.createElement("div");
   content.className = "bot-text";
 
+  const textSpan = document.createElement("span");
+  content.appendChild(textSpan);
+
   // Check for image URL in text
   const imgMatch = text.match(/(\/static\/graphs\/[^\s]+\.png)/);
   if (imgMatch) {
     const cleanText = text.replace(imgMatch[0], "").trim();
-    content.textContent = cleanText;
+    textSpan.textContent = cleanText;
 
     const img = document.createElement("img");
     img.src = imgMatch[0];
@@ -37,7 +40,7 @@ function addBotMessage(text) {
     img.alt = "Data Visualization";
     content.appendChild(img);
   } else {
-    content.textContent = text;
+    textSpan.textContent = text;
   }
 
   const btn = document.createElement("button");
@@ -62,13 +65,9 @@ function addBotMessage(text) {
 
       const data = await res.json();
 
-      // If we had an image, re-render text but keep image
-      if (imgMatch) {
-        const cleanReply = data.translation.replace(imgMatch[0], "").trim();
-        content.childNodes[0].textContent = cleanReply;
-      } else {
-        content.textContent = data.translation;
-      }
+      // Strip any graph URLs from the translation to keep text clean
+      const graphRegex = /\/static\/graphs\/[^\s]+\.png/gi;
+      textSpan.textContent = data.translation.replace(graphRegex, "").trim();
 
       translated = !translated;
     } catch (err) {

@@ -1,12 +1,17 @@
 import json
 import re
 import os
+import logging
 import pandas as pd
 from langgraph.graph import StateGraph
 from typing import TypedDict
 from langchain_core.messages import HumanMessage
 from utils import detect_language, translate_text
 from visualizer import Visualizer, FileDataSource, MockDataSource
+import uuid
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 class State(TypedDict):
     question: str
@@ -124,9 +129,10 @@ def generate_answer(state: State, llm):
         
     return {"answer": response}
 
-from visualizer import Visualizer, FileDataSource, MockDataSource
+
 
 def visualize_node(state: State):
+    temp_path = None
     # Determine strategy
     if os.path.exists("data/public_data.json"):
         # We need to transform the JSON structure into a flat DF for visualization if possible
@@ -137,7 +143,8 @@ def visualize_node(state: State):
         if state["intent"] == "members_by_state":
             df = pd.DataFrame(list(raw_data["members_by_state"].items()), columns=["State", "Members"])
             # Temporary file strategy for this specific DF
-            temp_path = "data/temp_viz.csv"
+            temp_path = f"data/temp_{uuid.uuid4().hex}.csv"
+            logger.info(f"Creating temporary CSV at {temp_path} for intent '{state['intent']}'. Data shape: {df.shape}")
             df.to_csv(temp_path, index=False)
             strategy = FileDataSource(temp_path)
         else:
@@ -145,14 +152,24 @@ def visualize_node(state: State):
     else:
         strategy = MockDataSource()
         
-    viz = Visualizer(strategy)
-    output_filename = f"static/graphs/viz_{state['intent']}.png"
-    graph_path = viz.analyze_and_plot(output_path=output_filename)
-    
-    # In a web app, we want the URL relative to static
-    graph_url = f"/static/graphs/{os.path.basename(graph_path)}"
-    
-    return {"graph_url": graph_url}
+    try:
+        viz = Visualizer(strategy)
+        intent = state.get("intent", "unknown")
+        safe_intent = re.sub(r'[^a-zA-Z0-9_]', '_', intent)
+        output_filename = f"static/graphs/viz_{safe_intent}.png"
+        graph_path = viz.analyze_and_plot(output_path=output_filename)
+        
+        if not graph_path:
+            return {"graph_url": None}
+        
+        # In a web app, we want the URL relative to static
+        graph_url = f"/static/graphs/{os.path.basename(graph_path)}"
+        
+        return {"graph_url": graph_url}
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            logger.info(f"Deleting temporary CSV at {temp_path}")
+            os.remove(temp_path)
 
 def route_to_answer(state: State):
     if state["intent"] == "visualize" or state["intent"] == "members_by_state":

@@ -2,6 +2,8 @@ flask
 langgraph
 langchain
 langchain-openai
+pandas
+matplotlib
 langchain-community
 langchain-ollama
 openai
