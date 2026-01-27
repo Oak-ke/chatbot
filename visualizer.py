@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import os
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Union
 
@@ -43,6 +44,10 @@ class MockDataSource(DataInterface):
         }
         return pd.DataFrame(data)
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 class Visualizer:
     def __init__(self, strategy: DataInterface):
         self.strategy = strategy
@@ -50,37 +55,56 @@ class Visualizer:
     def analyze_and_plot(self, query: str = None, output_path: str = "static/graphs/latest_plot.png"):
         df = self.strategy.fetch_data(query)
         
+        if not isinstance(df, pd.DataFrame):
+            logger.error("Data source returned invalid data type (expected DataFrame).")
+            return None
+            
+        logger.info(f"Analyzing data for plotting. Dataframe shape: {df.shape}")
+        
         if df.empty:
-            return "No data found to visualize."
+            logger.warning("Dataframe is empty. Skipping visualization.")
+            return None
 
         # Ensure directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
         plt.figure(figsize=(10, 6))
         
-        # Simple Logic for graph selection
-        cols = df.columns
-        num_cols = df.select_dtypes(include=['number']).columns
-        cat_cols = df.select_dtypes(exclude=['number']).columns
+        try:
+            # Simple Logic for graph selection
+            cols = df.columns
+            num_cols = df.select_dtypes(include=['number']).columns
+            cat_cols = df.select_dtypes(exclude=['number']).columns
 
-        if len(num_cols) >= 1 and len(cat_cols) >= 1:
-            # Bar chart for Category vs Value
-            df.plot(kind='bar', x=cat_cols[0], y=num_cols[0], ax=plt.gca())
-            graph_type = "Bar Chart"
-        elif len(num_cols) >= 2:
-            # Line chart for multiple numeric columns (e.g. trends)
-            df.plot(kind='line', ax=plt.gca())
-            graph_type = "Line Chart"
-        else:
-            # Fallback to pie or something else
-            df.plot(kind='pie', y=num_cols[0] if len(num_cols) > 0 else cols[0], ax=plt.gca())
-            graph_type = "Pie Chart"
+            if not cols.empty and len(num_cols) >= 1 and len(cat_cols) >= 1:
+                # Bar chart for Category vs Value
+                df.plot(kind='bar', x=cat_cols[0], y=num_cols[0], ax=plt.gca())
+                graph_type = "Bar Chart"
+            elif len(num_cols) >= 2:
+                # Line chart for multiple numeric columns (e.g. trends)
+                df.plot(kind='line', ax=plt.gca())
+                graph_type = "Line Chart"
+            elif not cols.empty:
+                # Fallback to pie or something else
+                target_col = num_cols[0] if not num_cols.empty else cols[0]
+                df.plot(kind='pie', y=target_col, ax=plt.gca())
+                graph_type = "Pie Chart"
+            else:
+                logger.error("No valid columns found for plotting.")
+                plt.close()
+                return None
+        except Exception as e:
+            logger.error(f"Error during plotting: {str(e)}")
+            plt.close()
+            return None
 
         plt.title(f"Visualized Data ({graph_type})")
+        logger.info(f"Generated {graph_type} visualization.")
         plt.tight_layout()
         plt.savefig(output_path)
         plt.close()
 
+        logger.info(f"Graph saved to {output_path}")
         return output_path
 
 if __name__ == "__main__":
