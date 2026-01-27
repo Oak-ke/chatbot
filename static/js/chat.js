@@ -21,7 +21,24 @@ function addBotMessage(text) {
 
   const content = document.createElement("div");
   content.className = "bot-text";
-  content.textContent = text;
+
+  // Check for image URL in text
+  const imgMatch = text.match(/(\/static\/graphs\/[^\s]+\.png)/);
+  if (imgMatch) {
+    const cleanText = text.replace(imgMatch[0], "").trim();
+    content.textContent = cleanText;
+
+    const img = document.createElement("img");
+    img.src = imgMatch[0];
+    img.className = "chat-graph";
+    img.style.maxWidth = "100%";
+    img.style.borderRadius = "8px";
+    img.style.marginTop = "10px";
+    img.alt = "Data Visualization";
+    content.appendChild(img);
+  } else {
+    content.textContent = text;
+  }
 
   const btn = document.createElement("button");
   btn.className = "translate-btn";
@@ -32,20 +49,27 @@ function addBotMessage(text) {
 
   btn.onclick = async () => {
     btn.disabled = true;
-    const prevText = btn.textContent;
-    btn.textContent = "Translating…"; // Animation effect
+    btn.textContent = "Translating…";
 
     try {
       const res = await fetch(`${API_BASE}/translate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: translated ? originalText : content.textContent
+          text: translated ? originalText : text // Use full text for translation
         })
       });
 
       const data = await res.json();
-      content.textContent = data.translation;
+
+      // If we had an image, re-render text but keep image
+      if (imgMatch) {
+        const cleanReply = data.translation.replace(imgMatch[0], "").trim();
+        content.childNodes[0].textContent = cleanReply;
+      } else {
+        content.textContent = data.translation;
+      }
+
       translated = !translated;
     } catch (err) {
       alert("Translation failed!");
@@ -66,7 +90,7 @@ function addBotTyping() {
   const wrapper = document.createElement("div");
   wrapper.className = "message bot typing";
   wrapper.textContent = "Co-op Magic AI Assistant is typing";
-  
+
   // Add animated dots
   const dots = document.createElement("span");
   dots.className = "dots";
