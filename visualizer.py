@@ -1,9 +1,10 @@
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg") # Anti-Grain Geometry headless server for side plotting
 import matplotlib.pyplot as plt
 import os
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Union
 
 class DataInterface(ABC):
     @abstractmethod
