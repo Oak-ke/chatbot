@@ -16,6 +16,9 @@ from visualizer import Visualizer, FileDataSource, MockDataSource
 import uuid
 from dotenv import load_dotenv
 
+import matplotlib
+matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
+
 # Configure logging
 logger = logging.getLogger(__name__)
 load_dotenv()
