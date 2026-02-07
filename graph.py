@@ -51,7 +51,16 @@ db_uri = os.getenv("DB_URI")
 db = SQLDatabase.from_uri(db_uri)
 
 # Allowed tables that the LLM is allowed to query
-ALLOWED_TABLES = {"member", "cooperative", "director"}
+ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "cooperative_stages"}
+
+# Whitelist of allowed columns per table
+ALLOWED_COLUMNS = {
+    "cooperative": {"cooperative_id", "cooperative_name", "cooperative_type", "cooperative_state", "cooperative_constitution", "cooperative_bylaws", "has_directors", "cooperative_state", "cooperative_boma", "approval_statusregisted", "cooperative_certificate"},
+    "member": {"cooperative_id", "member_id", "member_name", "member_gender", "member_state", "member_county", "member_payam", "member_boma"},
+    "director": {"cooperative_id", "director_id", "director_name", "director_gender", "director_payam", "director_state", "director_county", "director_boma"},
+    "cooperative_location": {"cooperative_id", "state", "county", "payam", "boma"},
+    "cooperative_stages": {"coop_id", "stage", "status", "nexr_stage"}
+}
 
 # Helper functions
 def get_schema(_):
@@ -71,27 +80,63 @@ def sanitize_sql(sql: str) -> str:
 
 def validate_sql(sql: str) -> None:
     """
-    Ensure that only allowed tables are referenced in SQL.
-    Raise an error if invalid tables are used or no table is referenced.
+    Ensure that only allowed tables and columns are referenced in SQL.
+    Raise an error if invalid tables/columns are used or no table is referenced.
     """
     sql_lower = sql.lower()
+    
+    # Extract table names from FROM and JOIN clauses
     tables = set(re.findall(r"\bfrom\s+(\w+)|\bjoin\s+(\w+)", sql_lower))
     tables = {t for pair in tables for t in pair if t}
 
     if not tables:
-        raise ValueError("No table referenced")
+        raise ValueError("No table referenced in query")
 
-    illegal = tables - ALLOWED_TABLES
-    if illegal:
-        raise ValueError(f"Illegal tables used: {illegal}")
+    illegal_tables = tables - ALLOWED_TABLES
+    if illegal_tables:
+        raise ValueError(f"Illegal tables used: {illegal_tables}. Allowed: {ALLOWED_TABLES}")
+    
+    # Extract column names (basic extraction)
+    columns = set(re.findall(r"\b(\w+)\s*(?:=|<|>|!=|\blike\b)", sql_lower))
+    columns.update(re.findall(r"\bselect\s+([^,\s]+)", sql_lower))
+    columns.update(re.findall(r",\s*(\w+)", sql_lower))
+    
+    # Remove SQL keywords and functions
+    keywords = {"count", "sum", "avg", "max", "min", "distinct", "as", "and", "or", "not", "in", "like", "between"}
+    columns = {c for c in columns if c and c not in keywords and not c.isdigit()}
+    
+    # Validate columns
+    for table in tables:
+        allowed = ALLOWED_COLUMNS.get(table, set())
+        # Extract columns that appear to be from this table
+        table_cols = set(re.findall(rf"{table}\.(\w+)", sql_lower))
+        
+        if table_cols:
+            illegal_cols = table_cols - allowed
+            if illegal_cols:
+                raise ValueError(
+                    f"Invalid columns for table '{table}': {illegal_cols}. "
+                    f"Allowed: {allowed}"
+                )
     
 def run_query(query: str):
     """
     Sanitize and execute the SQL query against the database.
     Returns the query results.
+    Raises descriptive errors if execution fails.
     """
     sql = sanitize_sql(query)
-    return db.run(sql)
+    try:
+        result = db.run(sql)
+        return result
+    except Exception as e:
+        error_msg = str(e)
+        if "Unknown column" in error_msg:
+            raise ValueError(f"Invalid column name in query. {error_msg}")
+        elif "doesn't exist" in error_msg:
+            raise ValueError(f"Table doesn't exist. {error_msg}")
+        else:
+            raise RuntimeError(f"Query execution failed: {error_msg}")
 
 # SQL generation
 def write_sql_query(llm):
@@ -100,28 +145,72 @@ def write_sql_query(llm):
     Uses a ChatPromptTemplate to instruct the LLM on exact columns to use.
     """
     sql_template = """
-        You are given a MySQL database schema.
+        You are a MySQL SQL generator for a cooperative database.
 
+        CRITICAL: ONLY 5 TABLES EXIST IN THIS DATABASE
+        The ONLY tables available are:
+        1. cooperative
+        2. member
+        3. director
+        4. cooperative_stages
+        5. cooperative_location
+        
+        Do NOT use any other tables (reserve, person, staff, accounts, employees, etc. DO NOT EXIST).
+
+        COMPLETE COLUMN REFERENCE (use EXACTLY ALLOWED_COLUMNS):
+        
+        cooperative table:
+        - cooperative_id, cooperative_name, cooperative_type, cooperative_state
+        - cooperative_constitution, cooperative_bylaws, has_directors, has_members
+        - cooperative_county, cooperative_payam, cooperative_boma, approval_status
+        - cooperative_certificate, enumerator_id, cooperative_date_created
+        
+        member table:
+        - member_id, cooperative_id, member_name, member_gender
+        - member_state, member_county, member_payam, member_boma
+        
+        director table:
+        - director_id, cooperative_id, director_name, director_gender
+        - director_state, director_county, director_payam, director_boma
+        
         CRITICAL RULES:
-        - Use EXACTLY these tables and columns:
-        - cooperative: cooperative_id, cooperative_name
-        - member: member_id, cooperative_id, member_name
-        - director: director_id, cooperative_id, director_name
-        - Do NOT invent column names like 'id' or 'name'
-        - Always reference these columns exactly as above
-        - Use JOINs only via foreign keys
-        - Prefer INNER JOIN
-        - Use aggregations when needed
-        - Return only ONE valid SELECT statement
-        - Do NOT explain, comment, or use markdown
-
-        Schema:
+        1. Use table.column format (e.g., member.member_gender, NOT member.gender)
+        2. Do NOT invent column names or table names
+        3. ALWAYS PREFER JOINs over subqueries
+        4. When filtering by cooperative_name, ALWAYS use INNER JOIN: 
+           SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
+        5. If you must use a subquery with multiple matches, use IN not =:
+           WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
+        6. For aggregation queries (state, count, max, etc.), query the appropriate table directly
+        7. Remember: state information exists in THREE tables as different columns:
+           - cooperative.cooperative_state (for cooperatives)
+           - member.member_state (for members)
+           - director.director_state (for directors)
+        8. For location/state matching, use LOWER() for case-insensitive comparison
+        9. Always include COUNT in aggregation SELECT - never just group without counting
+        10. Return ONLY ONE SELECT statement, no markdown, no explanation
+        
+        CRITICAL FOR LOCATION QUERIES:
+        When the question asks about a state, county, payam, boma or any location name:
+        - WRONG: WHERE cooperative_state = 'Western Bahr el Ghazal'
+        - WRONG: WHERE LOWER(cooperative_state) = 'western bahr el ghazal'
+        - CORRECT: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
+        The database stores names in mixed case, so you MUST use LOWER() on BOTH sides!
+        
+        EXAMPLES:
+        - "female members" → SELECT COUNT(*) FROM member WHERE member_gender = 'Female'
+        - "members in Yambio Farmers Cooperative" → SELECT COUNT(*) FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = 'Yambio Farmers Cooperative'
+        - "which state has the most cooperatives" → SELECT c.cooperative_state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
+        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
+        - "directors in each cooperative" → SELECT c.cooperative_name, COUNT(d.director_id) AS count FROM cooperative c LEFT JOIN director d ON c.cooperative_id = d.cooperative_id GROUP BY c.cooperative_id
+        
+        Database Schema:
         {schema}
 
-        Question:
+        User Question:
         {question}
 
-        SQL:
+        Output SQL (no markdown, no explanation):
     """
 
     # Define LLM prompt msg
@@ -129,12 +218,42 @@ def write_sql_query(llm):
         [
             (
                 "system",
-                """
-                You are a SQL generator. Always use the exact column names:
-                - cooperative: cooperative_id, cooperative_name
-                - member: member_id, cooperative_id, member_name
-                - director: director_id, cooperative_id, director_name
-                Return ONLY valid SELECT SQL. No explanations.
+                """You are an expert SQL generator for a MySQL cooperative database.
+
+                    CRITICAL: This database has ONLY 5 TABLES:
+                    1. cooperative
+                    2. member  
+                    3. director
+                    4. cooperative_stages
+                    5. cooperative_location
+
+                    DO NOT USE any other tables: users, person, staff, accounts, employees, etc.
+                                                        
+                    COMPLETE VALID COLUMNS:
+                    cooperative: cooperative_id, cooperative_name, cooperative_type, cooperative_state, cooperative_constitution, cooperative_bylaws, has_directors, has_members, cooperative_county, cooperative_payam, cooperative_boma, approval_status, cooperative_certificate, enumerator_id, cooperative_date_created
+
+                    member: member_id, cooperative_id, member_name, member_gender, member_state, member_county, member_payam, member_boma
+
+                    director: director_id, cooperative_id, director_name, director_gender, director_state, director_county, director_payam, director_boma
+
+                    CRITICAL SQL RULES:
+                    1. ALWAYS PREFER JOINs over subqueries
+                    2. When filtering by cooperative_name, ALWAYS use INNER JOIN:
+                    SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
+                    3. If you MUST use a subquery, use IN not = when there might be multiple matches:
+                    WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
+                    4. For state-related queries:
+                    - "state" about cooperatives = cooperative.cooperative_state
+                    - "state" about members = member.member_state
+                    - "state" about directors = director.director_state
+                    5. For state/location matching, ALWAYS use case-insensitive comparison:
+                    - Use LOWER: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
+                    6. For aggregation queries (count by state, max/min by group):
+                    - Query the primary table directly, then GROUP BY
+                    - Always include COUNT(*) in the SELECT when aggregating
+                    - Use proper table aliases to avoid ambiguous column errors
+                    7. Always use the full column name with table prefix (member.member_gender, NOT member.gender)
+                    8. Generate ONLY valid SQL, no explanations or markdown.
                 """
             ),
             ("human", sql_template),
@@ -149,16 +268,18 @@ def write_sql_query(llm):
         | StrOutputParser()
     )
 
-def generate_valid_sql(question: str, llm, max_retries: int = 2) -> str:
+def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
     """
     Generate a valid SQL query from the user question.
-    If invalid SQL is generated by the LLM, retry up to max_retries.
-    Validates table usage before returning SQL.
+    If invalid SQL is generated by the LLM, retry up to max_retries times.
+    Validates table and column usage before returning SQL.
+    Also validates at execution time to catch runtime errors.
     """
+
     error_message = None
 
-    for _ in range(max_retries):
-        sql = write_sql_query(llm).invoke(
+    for attempt in range(max_retries):
+        sql_raw = write_sql_query(llm).invoke(
             {
                 "question": question
                 if not error_message
@@ -168,10 +289,50 @@ def generate_valid_sql(question: str, llm, max_retries: int = 2) -> str:
                         Error:
                         {error_message}
 
-                        Rules reminder:
-                        - Use ONLY tables: member, cooperative, director
-                        - Do NOT invent names
-                        - Output ONE valid SELECT
+                        ⚠️ KEY FIXES BASED ON ERROR:
+                        
+                        IF ERROR: "Subquery returns more than 1 row"
+                        → Use INNER JOIN instead of subquery
+                        
+                        IF ERROR: "Unknown column" or "Ambiguous column"
+                        → Always use table.column format (e.g., c.cooperative_state, NOT state)
+                        → Check which table has the column: 
+                           - cooperative.cooperative_state (for cooperatives)
+                           - member.member_state (for members)
+                           - director.director_state (for directors)
+                        
+                        IF QUESTION ABOUT: "{question}"
+                        
+                        FOR "HOW MANY [THING] IN [LOCATION]" QUESTIONS:
+                        - Always include the COUNT in the SELECT
+                        - Use CASE-INSENSITIVE matching for state names (use LOWER or similar)
+                        - Example: "How many cooperatives in Western Bahr el Ghazal?"
+                          → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
+                        - OR if the state name is slightly different, try fuzzy matching or list all that contain the keyword
+                        
+                        FOR "WHICH [LOCATION] HAS THE MOST [THINGS]" QUESTIONS:
+                        - Use GROUP BY with the location column
+                        - ORDER BY COUNT descending
+                        - Example: "Which state has most cooperatives?"
+                          → SELECT c.cooperative_state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
+                        - Make sure to include BOTH the location name AND the count in the SELECT
+                        
+                        RULES FOR LOCATION-BASED QUERIES:
+                        1. Always use full table.column format (c.cooperative_state)
+                        2. For exact matches, try LOWER() for case-insensitive comparison
+                        3. For aggregations, GROUP BY the location column
+                        4. Always include COUNT(*) or COUNT(id) to get the number
+                        5. Never mix columns without proper JOINs
+                        
+                        COMPLETE VALID COLUMNS (use table.column format):
+                        cooperative: c.cooperative_id, c.cooperative_name, c.cooperative_type, c.cooperative_state, 
+                                     c.cooperative_county, c.cooperative_payam, c.cooperative_boma
+                        
+                        member: m.member_id, m.cooperative_id, m.member_name, m.member_gender, m.member_state, 
+                                m.member_county, m.member_payam, m.member_boma
+                        
+                        director: d.director_id, d.cooperative_id, d.director_name, d.director_gender, d.director_state,
+                                  d.director_county, d.director_payam, d.director_boma
 
                         Original question:
                         {question}
@@ -179,43 +340,115 @@ def generate_valid_sql(question: str, llm, max_retries: int = 2) -> str:
             }
         )
 
+        sql = sanitize_sql(sql_raw)
+        
         try:
-            validate_sql(sanitize_sql(sql))
+            # Validate syntax/structure
+            validate_sql(sql)
+            
+            # Try executing to catch runtime column errors
+            run_query(sql)
+            
             return sql
         except Exception as e:
             error_message = str(e)
-
-    raise RuntimeError(f"Unable to generate valid SQL: {error_message}")
+            logger.warning(f"Attempt {attempt + 1}/{max_retries} failed: {error_message}")
+            
+            if attempt == max_retries - 1:
+                raise RuntimeError(f"Unable to generate valid SQL after {max_retries} attempts: {error_message}")
 
 # Natural answer generation
 def answer_user_query(question: str) -> str:
     """
-    Executes the generated SQL query and converts the result to natural language using LLM.
+    Executes the generated SQL query and converts the result to a simple, direct answer.
+    Provides intelligent, context-aware responses based on actual data state.
+    Never shows SQL details, technical information, or explanations.
     """
-    sql = generate_valid_sql(question, llm)
-    response = run_query(sql)
+    try:
+        sql = generate_valid_sql(question, llm)
+        response = run_query(sql)
+    except Exception as e:
+        logger.error(f"Query generation/execution failed: {str(e)}")
+        return "I'm unable to answer that question at this time."
 
-    # Prompt LLM to create human-readable answer
+    # Check for empty results - handle intelligently
+    if not response or response.strip() == "" or response.strip() == "0 rows in set":
+        # Let LLM generate context-aware response for empty results
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """You are answering a user's question when the database returned no results.
+
+                        RULES FOR EMPTY/NULL RESULTS:
+                        1. Do NOT say "No data found" - be more specific
+                        2. Infer from the question why there might be no results
+                        3. Explain the situation naturally (e.g., "No members have gender information recorded" or "This cooperative has no members yet")
+                        4. Be empathetic and informative
+                        5. Keep answer to 1-2 sentences
+                        6. Do NOT mention SQL, queries, or technical details
+
+                        Examples:
+                        - Q: "What gender are the members?" with no results → "No members have gender information recorded in the system."
+                        - Q: "How many directors does X cooperative have?" with no results → "This cooperative has no directors registered yet."
+                        - Q: "Show all members in state Y" with no results → "There are no members registered in that state."
+                    """
+                ),
+                (
+                    "human",
+                    f"""User Question: {question}
+
+                    Database returned no results. Generate a natural, context-specific explanation (1-2 sentences):"""
+                ),
+            ]
+        )
+        
+        messages = prompt.format_messages()
+        return llm.invoke(messages).content.strip()
+
+    # Strict prompt for non-empty results
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "Given an input question and SQL response, convert it to a natural language answer. No preamble.",
+                """You are answering a user's question based on SQL query results.
+
+                    CRITICAL RULES:
+                    1. Give ONLY the answer to the user's question - be DIRECT and CONCISE
+                    2. Answer in ONE sentence maximum (or 2 sentences only if absolutely necessary)
+                    3. Do NOT mention SQL, queries, databases, or how you got the answer
+                    4. Do NOT explain technical details or debugging information
+                    5. Do NOT list data entries or show raw results
+                    6. For COUNT or numeric results: ALWAYS include the number in your answer
+                    7. For lookup/aggregation questions: state what was found WITH the count
+                    8. If result contains NULL or missing values, explain what's missing
+
+                    WORD LIMIT: Keep your answer under 30 words.
+
+                    IMPORTANT EXAMPLES:
+                    - Q: "Which state has most cooperatives?" Result: Western Bahr el Ghazal | 5 → "Western Bahr el Ghazal has the most cooperatives with 5."
+                    - Q: "How many cooperatives in X state?" Result: 5 → "X state has 5 cooperatives."
+                    - Q: "How many members?" Result: 150 → "There are 150 members."
+                    - Q: "Which has most?" Result: Item | 10 → "Item has the most with 10."
+                """
             ),
             (
                 "human",
-                f"""
-                    Schema: {get_schema(None)}
-                    Question: {question}
-                    SQL Query: {sql}
-                    SQL Response: {response}
-                """
+                f"""Question: {question}
+                    Result: {response}
+
+                    Answer (ONE sentence, under 30 words, INCLUDE ALL NUMERIC VALUES):"""
             ),
         ]
     )
-
+    
     messages = prompt.format_messages()
-    return llm.invoke(messages).content
+    answer = llm.invoke(messages).content.strip()
+    # Safety truncation since max_tokens is 256
+    if len(answer) > 300:
+        answer = answer[:300].rsplit('.', 1)[0] + "."
+    
+    return answer
 
 # Language detection and translation
 def detect_lan_and_translate(state: State, llm):
