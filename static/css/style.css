@@ -91,6 +91,16 @@ body {
   cursor: pointer;
 }
 
+.chat-input input:disabled {
+  background: hsl(0, 0%, 95%);
+  cursor: not-allowed;
+}
+
+.chat-input button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .translate-btn {
   margin: 4px 2px;
   padding: 4px;
