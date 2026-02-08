@@ -1,9 +1,23 @@
+// Dom elements
 const form = document.getElementById("chat-form");
 const input = document.getElementById("message-input");
 const messages = document.getElementById("messages");
+const submitBtn = document.querySelector("button");
 
 // Base URL automatically includes protocol + host + port
 const API_BASE = window.location.origin;
+
+// Input locking
+function disableChatInput() {
+  input.disabled = true;
+  submitBtn.disabled = true;
+}
+
+function enableChatInput() {
+  input.disabled = false;
+  submitBtn.disabled = false;
+  input.focus();
+}
 
 // Function to add a message to the chat window
 function addMessage(text, type) {
@@ -43,6 +57,7 @@ function addBotMessage(text) {
     textSpan.textContent = text;
   }
 
+  // Translate button
   const btn = document.createElement("button");
   btn.className = "translate-btn";
   btn.textContent = "Translate";
@@ -114,11 +129,15 @@ window.addEventListener("DOMContentLoaded", () => {
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
+  if (input.disabled) return; // Prevent multiple submissions
+
   const message = input.value.trim();
   if (!message) return;
 
   addMessage(message, "user");
   input.value = "";
+
+  disableChatInput(); // Disable input while waiting for response
 
   // Show typing indicator
   const typingElem = addBotTyping();
@@ -139,8 +158,13 @@ form.addEventListener("submit", async (e) => {
     // Remove typing indicator
     typingElem.remove();
 
+    enableChatInput(); // Re-enable input
+
     addBotMessage(data.reply);
   } catch {
+    typingElem.remove();
+    enableChatInput();
     addMessage("Unable to reach the server.", "bot");
+    console.error(err);
   }
 });
