@@ -21,6 +21,11 @@ matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
 
 # Configure logging
 logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
 load_dotenv()
 llm = llama_llm()
 
@@ -126,8 +131,11 @@ def run_query(query: str):
     Raises descriptive errors if execution fails.
     """
     sql = sanitize_sql(query)
+    logger.info(f"[SQL GENERATED] {sql}")
+
     try:
         result = db.run(sql)
+        logger.info(f"[SQL RESULT] {str(result)[:500]}")
         return result
     except Exception as e:
         error_msg = str(e)
@@ -192,16 +200,24 @@ def write_sql_query(llm):
         
         CRITICAL FOR LOCATION QUERIES:
         When the question asks about a state, county, payam, boma or any location name:
-        - WRONG: WHERE cooperative_state = 'Western Bahr el Ghazal'
-        - WRONG: WHERE LOWER(cooperative_state) = 'western bahr el ghazal'
-        - CORRECT: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
-        The database stores names in mixed case, so you MUST use LOWER() on BOTH sides!
+        IMPORTANT: State names in the database use UNDERSCORES, not spaces!
+        - User types: 'Western Bahr el Ghazal' (with spaces)
+        - Database has: 'Western_Bahr_el_Ghazal' (with underscores)
+        
+        Use REPLACE to convert spaces to underscores in comparison:
+        - CORRECT: WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
+        OR normalize the column:
+        - CORRECT: WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
+        
+        WRONG approaches:
+        - WHERE cooperative_state = 'Western Bahr el Ghazal' (case AND format mismatch)
+        - WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (missing underscore conversion)
         
         EXAMPLES:
         - "female members" → SELECT COUNT(*) FROM member WHERE member_gender = 'Female'
         - "members in Yambio Farmers Cooperative" → SELECT COUNT(*) FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = 'Yambio Farmers Cooperative'
-        - "which state has the most cooperatives" → SELECT c.cooperative_state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
+        - "which state has the most cooperatives" → SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
+        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
         - "directors in each cooperative" → SELECT c.cooperative_name, COUNT(d.director_id) AS count FROM cooperative c LEFT JOIN director d ON c.cooperative_id = d.cooperative_id GROUP BY c.cooperative_id
         
         Database Schema:
@@ -305,24 +321,26 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                         
                         FOR "HOW MANY [THING] IN [LOCATION]" QUESTIONS:
                         - Always include the COUNT in the SELECT
-                        - Use CASE-INSENSITIVE matching for state names (use LOWER or similar)
-                        - Example: "How many cooperatives in Western Bahr el Ghazal?"
-                          → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
-                        - OR if the state name is slightly different, try fuzzy matching or list all that contain the keyword
+                        - CRITICAL: State names in database use UNDERSCORES not SPACES!
+                        - User input: 'Western Bahr el Ghazal' (spaces)
+                        - Database: 'Western_Bahr_el_Ghazal' (underscores)
+                        - CORRECT: SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
+                        - OR: SELECT COUNT(*) FROM cooperative WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
+                        - WRONG: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (spaces don't match underscores!)
                         
                         FOR "WHICH [LOCATION] HAS THE MOST [THINGS]" QUESTIONS:
                         - Use GROUP BY with the location column
-                        - ORDER BY COUNT descending
-                        - Example: "Which state has most cooperatives?"
-                          → SELECT c.cooperative_state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-                        - Make sure to include BOTH the location name AND the count in the SELECT
+                        - ORDER BY COUNT descending  
+                        - CONVERT underscores to spaces for display:
+                        - CORRECT: SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
+                        - This will return 'Western Bahr el Ghazal' instead of 'Western_Bahr_el_Ghazal'
                         
                         RULES FOR LOCATION-BASED QUERIES:
                         1. Always use full table.column format (c.cooperative_state)
-                        2. For exact matches, try LOWER() for case-insensitive comparison
+                        2. For matching user input to database: use REPLACE to convert spaces ↔ underscores
                         3. For aggregations, GROUP BY the location column
                         4. Always include COUNT(*) or COUNT(id) to get the number
-                        5. Never mix columns without proper JOINs
+                        5. ALWAYS use REPLACE() when comparing with user-provided location names
                         
                         COMPLETE VALID COLUMNS (use table.column format):
                         cooperative: c.cooperative_id, c.cooperative_name, c.cooperative_type, c.cooperative_state, 
@@ -341,7 +359,6 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
         )
 
         sql = sanitize_sql(sql_raw)
-        
         try:
             # Validate syntax/structure
             validate_sql(sql)
@@ -366,6 +383,7 @@ def answer_user_query(question: str) -> str:
     """
     try:
         sql = generate_valid_sql(question, llm)
+        logger.info(f"[FINAL SQL USED] {sql}")
         response = run_query(sql)
     except Exception as e:
         logger.error(f"Query generation/execution failed: {str(e)}")
