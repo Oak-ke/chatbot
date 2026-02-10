@@ -243,7 +243,7 @@ def write_sql_query(llm):
                     4. cooperative_stages
                     5. cooperative_location
 
-                    DO NOT USE any other tables: users, person, staff, accounts, employees, etc.
+                    DO NOT USE any other tables: reserve, citizen, admin, invoices, note, password_reset, receipts.
                                                         
                     COMPLETE VALID COLUMNS:
                     cooperative: cooperative_id, cooperative_name, cooperative_type, cooperative_state, cooperative_constitution, cooperative_bylaws, has_directors, has_members, cooperative_county, cooperative_payam, cooperative_boma, approval_status, cooperative_certificate, enumerator_id, cooperative_date_created
