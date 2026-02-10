@@ -40,11 +40,7 @@ function addBotMessage(text, graphBase64) {
   content.appendChild(textSpan);
 
   // Check for image URL in text
-  // const imgMatch = text.match(/(\/static\/graphs\/[^\s]+\.png)/);
   if (graphBase64) {
-    // const cleanText = text.replace(imgMatch[0], "").trim();
-    // textSpan.textContent = cleanText;
-
     const img = document.createElement("img");
     img.src = `data:image/png;base64,${graphBase64}`; // Use the base64 string directly as the image source
     img.className = "chat-graph";
@@ -87,8 +83,6 @@ function addBotMessage(text, graphBase64) {
 
       const data = await res.json();
 
-      // Strip any graph URLs from the translation to keep text clean
-      // const graphRegex = /\/static\/graphs\/[^\s]+\.png/gi;
       textSpan.textContent = data.translation;
 
       currentLang = currentLang === "en" ? "ar" : "en";
@@ -165,7 +159,7 @@ form.addEventListener("submit", async (e) => {
 
     enableChatInput(); // Re-enable input
 
-    addBotMessage(data.reply, data.graphBase64); // Pass graph URL if explicitly
+    addBotMessage(data.answer, data.graphBase64); // Pass answer text and graph if available
   } catch {
     typingElem.remove();
     enableChatInput();

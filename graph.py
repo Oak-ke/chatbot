@@ -508,16 +508,18 @@ def select_data(state: State):
     Depending on intent, either return system info or query database for relevant data.
     """
     if state["intent"] in {"system_info", "system_name"}:
-        return {"data": "This system manages cooperative data dynamically from MySQL."}
+        return {"answer": "This system manages cooperative data dynamically from MySQL."}
 
     if state["intent"] == "visualize":
         sql = generate_valid_sql(state["question"], llm)
         df = run_query_df(sql)
-        return {"viz_data": df, "answer": None}
+        # Generate a caption for the visualization
+        answer = answer_user_query(state["question"])
+        return {"viz_data": df, "answer": answer}
     
     # For other intents, generate SQL and query database
     return {
-        "data": answer_user_query(state["question"])
+        "answer": answer_user_query(state["question"])
     }
 
 
@@ -538,10 +540,31 @@ def run_query_df(query: str) -> pd.DataFrame:
     return pd.read_sql(sql, db._engine)
 
 
+def detect_chart_type(question: str) -> str:
+    """
+    Detect what type of chart the user is requesting from their question.
+    Returns: 'pie', 'bar', 'line', 'histogram', or 'bar' (default)
+    """
+    question_lower = question.lower()
+    
+    if "pie" in question_lower or "pie chart" in question_lower:
+        return "pie"
+    elif "line" in question_lower or "trend" in question_lower or "over time" in question_lower:
+        return "line"
+    elif "histogram" in question_lower or "distribution" in question_lower and "histogram" in question_lower:
+        return "histogram"
+    elif "bar" in question_lower or "bar chart" in question_lower:
+        return "bar"
+    else:
+        return "bar"  # Default to bar chart
+
+
 def visualize_node(state: State):
     """
-    Generate a bar chart from the state's viz_data DataFrame and return it as a Base64 string.
+    Generate a chart from the state's viz_data DataFrame and return it as a Base64 string.
+    Supports pie, bar, line, and histogram charts.
     If viz_data is missing or empty, returns None for the graph.
+    Normalizes data for cleaner visualizations.
     """
     df = state.get("viz_data")
 
@@ -549,14 +572,98 @@ def visualize_node(state: State):
         logger.warning("No dataframe available for visualization")
         return {"graph_base64": None}
 
-    # Plot using matplotlib in memory
-    plt.figure(figsize=(8, 5))
-    df.plot(kind='bar', x=df.columns[0], y=df.columns[1])
+    # Normalize gender values (handle inconsistency: ' M ', 'M', 'Male', etc.)
+    if len(df.columns) >= 1:
+        gender_col = df.columns[0]
+        
+        # Check if this looks like gender data
+        if gender_col.lower().strip() in ["member_gender", "director_gender"]:
+            def normalize_gender(val):
+                val = str(val).strip().lower() if val else "unknown"
+                if val in ["m", "male"]:
+                    return "Male"
+                elif val in ["f", "female"]:
+                    return "Female"
+                elif val == "unknown" or val == "":
+                    return "Other"
+                else:
+                    return val.capitalize()
+            
+            df[gender_col] = df[gender_col].apply(normalize_gender)
+            
+            # Group by normalized values and sum counts
+            if len(df.columns) >= 2:
+                count_col = df.columns[1]
+                df = df.groupby(gender_col)[count_col].sum().reset_index()
+                logger.info(f"[VIZ DATA NORMALIZED] {df.to_dict('records')}")
+
+    # Detect chart type from question
+    chart_type = detect_chart_type(state.get("question", ""))
+    logger.info(f"[CHART TYPE DETECTED] {chart_type}")
+
+    # Create appropriate chart
+    plt.figure(figsize=(10, 6))
+    
+    if chart_type == "pie":
+        # Pie chart with better colors and larger fonts
+        colors = ['#FF6B6B', '#4ECDC4', "#BCD145", '#FFA07A', '#98D8C8', '#F7DC6F']
+        _, texts, autotexts = plt.pie(
+            df[df.columns[1]], 
+            labels=df[df.columns[0]], 
+            autopct='%1.1f%%',
+            colors=colors,
+            startangle=90,
+            textprops={'fontsize': 13, 'weight': 'bold'}
+        )
+        plt.title(f'{df.columns[1]} Distribution', fontsize=16, fontweight='bold', pad=20)
+        
+        # Make percentage text bold and larger
+        for autotext in autotexts:
+            autotext.set_color('white')
+            autotext.set_fontweight('bold')
+            autotext.set_fontsize(13)
+        
+        # Make labels bold and larger
+        for text in texts:
+            text.set_fontweight('bold')
+            text.set_fontsize(13)
+            
+    elif chart_type == "line":
+        # Line chart
+        plt.plot(df[df.columns[0]], df[df.columns[1]], marker='o', linewidth=2, markersize=8, color='steelblue')
+        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        plt.ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        plt.title('Data Trend', fontsize=13, fontweight='bold')
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(True, alpha=0.3)
+        
+    elif chart_type == "histogram":
+        # Histogram with larger fonts
+        plt.hist(df[df.columns[0]], bins=10, color='steelblue', edgecolor='black', alpha=0.7)
+        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        plt.ylabel('Frequency', fontsize=13, fontweight='bold')
+        plt.title('Distribution Histogram', fontsize=16, fontweight='bold', pad=20)
+        plt.xticks(rotation=45, ha='right', fontsize=12)
+        plt.yticks(fontsize=12)
+        
+    else:
+        # Default to bar chart
+        ax = df.plot(kind='bar', x=df.columns[0], y=df.columns[1], legend=False, color='steelblue')
+        
+        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        plt.ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        plt.title('Data Distribution', fontsize=13, fontweight='bold')
+        plt.xticks(rotation=45, ha='right')
+        
+        # Add value labels on bars
+        for i, v in enumerate(df[df.columns[1]]):
+            ax.text(i, v + 5, str(v), ha='center', va='bottom', fontweight='bold')
+    
     plt.tight_layout()
 
     # Save to BytesIO instead of file
     buf = BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format='png', dpi=100)
     plt.close()
     buf.seek(0)
 
