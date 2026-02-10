@@ -508,7 +508,7 @@ def select_data(state: State):
     Depending on intent, either return system info or query database for relevant data.
     """
     if state["intent"] in {"system_info", "system_name"}:
-        return {"answer": "This system manages cooperative data dynamically from MySQL."}
+        return {"answer": "Co-op Magic is a comprehensive system designed to manage cooperatives' data across South Sudan securely and efficiently. With Co-op Magic, users can easily register, track, and manage cooperative members, and operations all in one centralized platform. The system ensures data integrity and security while providing actionable insights to help cooperatives operate smoothly and transparently."}
 
     if state["intent"] == "visualize":
         sql = generate_valid_sql(state["question"], llm)
