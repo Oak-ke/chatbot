@@ -29,7 +29,7 @@ function addMessage(text, type) {
 }
 
 // Bot message with translate button and animation
-function addBotMessage(text) {
+function addBotMessage(text, graphBase64) {
   const wrapper = document.createElement("div");
   wrapper.className = "message bot";
 
@@ -40,13 +40,13 @@ function addBotMessage(text) {
   content.appendChild(textSpan);
 
   // Check for image URL in text
-  const imgMatch = text.match(/(\/static\/graphs\/[^\s]+\.png)/);
-  if (imgMatch) {
-    const cleanText = text.replace(imgMatch[0], "").trim();
-    textSpan.textContent = cleanText;
+  // const imgMatch = text.match(/(\/static\/graphs\/[^\s]+\.png)/);
+  if (graphBase64) {
+    // const cleanText = text.replace(imgMatch[0], "").trim();
+    // textSpan.textContent = cleanText;
 
     const img = document.createElement("img");
-    img.src = imgMatch[0];
+    img.src = `data:image/png;base64,${graphBase64}`; // Use the base64 string directly as the image source
     img.className = "chat-graph";
     img.style.maxWidth = "100%";
     img.style.borderRadius = "8px";
@@ -65,6 +65,11 @@ function addBotMessage(text) {
   let currentLang = "en"; // default language
 
   btn.onclick = async () => {
+    // If there's no text to translate, alert user
+    if (!textSpan.textContent || textSpan.textContent.trim() === "") {
+      alert("Cannot translate graphical content. Only text can be translated.");
+      return;
+    }
     btn.disabled = true;
     btn.textContent = "Translating…";
 
@@ -83,8 +88,8 @@ function addBotMessage(text) {
       const data = await res.json();
 
       // Strip any graph URLs from the translation to keep text clean
-      const graphRegex = /\/static\/graphs\/[^\s]+\.png/gi;
-      textSpan.textContent = data.translation.replace(graphRegex, "").trim();
+      // const graphRegex = /\/static\/graphs\/[^\s]+\.png/gi;
+      textSpan.textContent = data.translation;
 
       currentLang = currentLang === "en" ? "ar" : "en";
       btn.textContent = currentLang === "en" ? "Translate" : "Original";
@@ -160,7 +165,7 @@ form.addEventListener("submit", async (e) => {
 
     enableChatInput(); // Re-enable input
 
-    addBotMessage(data.reply);
+    addBotMessage(data.reply, data.graphBase64); // Pass graph URL if explicitly
   } catch {
     typingElem.remove();
     enableChatInput();

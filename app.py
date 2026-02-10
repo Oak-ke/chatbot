@@ -21,9 +21,12 @@ def chat():
         "question": question
     })
     
-    return jsonify({
-        "reply": result["answer"]
-    })
+    response = {
+        "answer": result.get("answer", "No data found."),
+        "graphBase64": result.get("graph_base64")
+    }
+    
+    return jsonify(response)
     
 # Translation route
 @app.route("/translate", methods=["POST"])

@@ -1,10 +1,9 @@
-import json
 import re
 import os
 import logging
 import pandas as pd
 from langgraph.graph import StateGraph
-from typing import TypedDict
+from typing import TypedDict, Optional
 from langchain_core.messages import HumanMessage
 from utils import detect_language, translate_text
 from llm import llama_llm
@@ -12,12 +11,12 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from visualizer import Visualizer, FileDataSource, MockDataSource
-import uuid
+import base64
+from io import BytesIO
 from dotenv import load_dotenv
-
 import matplotlib
 matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
+import matplotlib.pyplot as plt
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -36,7 +35,8 @@ class State(TypedDict):
     intent: str
     data: str | None
     answer: str
-    graph_url: str
+    viz_data: Optional[pd.DataFrame]
+    graph_base64: Optional[str]
 
 # Intent mapping
 INTENT_MAP = {
@@ -305,7 +305,7 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                         Error:
                         {error_message}
 
-                        ⚠️ KEY FIXES BASED ON ERROR:
+                        KEY FIXES BASED ON ERROR:
                         
                         IF ERROR: "Subquery returns more than 1 row"
                         → Use INNER JOIN instead of subquery
@@ -510,6 +510,11 @@ def select_data(state: State):
     if state["intent"] in {"system_info", "system_name"}:
         return {"data": "This system manages cooperative data dynamically from MySQL."}
 
+    if state["intent"] == "visualize":
+        sql = generate_valid_sql(state["question"], llm)
+        df = run_query_df(sql)
+        return {"viz_data": df, "answer": None}
+    
     # For other intents, generate SQL and query database
     return {
         "data": answer_user_query(state["question"])
@@ -520,51 +525,49 @@ def generate_answer(state: State, llm):
     """
     Prepare the final answer. Returns data if available, otherwise a fallback message.
     """
-    return {"answer": state["data"] or "No data found."}
+    result = {"answer": state.get("answer") or "No data found."}
+    if "graph_base64" in state and state["graph_base64"]:
+        result["graph_base64"] = state["graph_base64"]
+    
+    return result
+
+
+def run_query_df(query: str) -> pd.DataFrame:
+    sql = sanitize_sql(query)
+    logger.info(f"[SQL DF] {sql}")
+    return pd.read_sql(sql, db._engine)
 
 
 def visualize_node(state: State):
-    temp_path = None
-    # Determine strategy
-    if os.path.exists("data/public_data.json"):
-        # We need to transform the JSON structure into a flat DF for visualization if possible
-        with open("data/public_data.json", "r") as f:
-            raw_data = json.load(f)
-        
-        # If it's the members_by_state, it's easy to visualize
-        if state["intent"] == "members_by_state":
-            df = pd.DataFrame(list(raw_data["members_by_state"].items()), columns=["State", "Members"])
-            # Temporary file strategy for this specific DF
-            temp_path = f"data/temp_{uuid.uuid4().hex}.csv"
-            logger.info(f"Creating temporary CSV at {temp_path} for intent '{state['intent']}'. Data shape: {df.shape}")
-            df.to_csv(temp_path, index=False)
-            strategy = FileDataSource(temp_path)
-        else:
-            strategy = MockDataSource()
-    else:
-        strategy = MockDataSource()
-        
-    try:
-        viz = Visualizer(strategy)
-        intent = state.get("intent", "unknown")
-        safe_intent = re.sub(r'[^a-zA-Z0-9_]', '_', intent)
-        output_filename = f"static/graphs/viz_{safe_intent}.png"
-        graph_path = viz.analyze_and_plot(output_path=output_filename)
-        
-        if not graph_path:
-            return {"graph_url": None}
-        
-        # In a web app, we want the URL relative to static
-        graph_url = f"/static/graphs/{os.path.basename(graph_path)}"
-        
-        return {"graph_url": graph_url}
-    finally:
-        if temp_path and os.path.exists(temp_path):
-            logger.info(f"Deleting temporary CSV at {temp_path}")
-            os.remove(temp_path)
+    """
+    Generate a bar chart from the state's viz_data DataFrame and return it as a Base64 string.
+    If viz_data is missing or empty, returns None for the graph.
+    """
+    df = state.get("viz_data")
+
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        logger.warning("No dataframe available for visualization")
+        return {"graph_base64": None}
+
+    # Plot using matplotlib in memory
+    plt.figure(figsize=(8, 5))
+    df.plot(kind='bar', x=df.columns[0], y=df.columns[1])
+    plt.tight_layout()
+
+    # Save to BytesIO instead of file
+    buf = BytesIO()
+    plt.savefig(buf, format='png')
+    plt.close()
+    buf.seek(0)
+
+    # Encode to Base64
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+
+    return {"graph_base64": img_base64}
+
 
 def route_to_answer(state: State):
-    if state["intent"] == "visualize" or state["intent"] == "members_by_state":
+    if state["intent"] == "visualize" or state["intent"] == "viz_data":
         return "visualize"
     return "answer"
 
