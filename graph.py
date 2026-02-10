@@ -363,7 +363,7 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
             # Validate syntax/structure
             validate_sql(sql)
             
-            # Try executing to catch runtime column errors
+            # Catch runtime column errors
             run_query(sql)
             
             return sql
@@ -389,7 +389,7 @@ def answer_user_query(question: str) -> str:
         logger.error(f"Query generation/execution failed: {str(e)}")
         return "I'm unable to answer that question at this time."
 
-    # Check for empty results - handle intelligently
+    # Check for empty results
     if not response or response.strip() == "" or response.strip() == "0 rows in set":
         # Let LLM generate context-aware response for empty results
         prompt = ChatPromptTemplate.from_messages(
