@@ -163,7 +163,7 @@ def write_sql_query(llm):
         4. cooperative_stages
         5. cooperative_location
         
-        Do NOT use any other tables (reserve, person, staff, accounts, employees, etc. DO NOT EXIST).
+        Do NOT use any other tables (reserve, admin, citizen, invoices, note, password_reset, receipts. DO NOT EXIST).
 
         COMPLETE COLUMN REFERENCE (use EXACTLY ALLOWED_COLUMNS):
         
