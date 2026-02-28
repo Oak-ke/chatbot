@@ -1,3 +1,10 @@
+// Service worker register
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/static/js/service_worker.js");
+  });
+}
+
 // Dom elements
 const form = document.getElementById("chat-form");
 const input = document.getElementById("message-input");
@@ -17,6 +24,11 @@ function enableChatInput() {
   input.disabled = false;
   submitBtn.disabled = false;
   input.focus();
+}
+
+// Message rendering
+function scrollToBottom() {
+  messages.scrollTop = messages.scrollHeight;
 }
 
 // Function to add a message to the chat window
@@ -160,10 +172,10 @@ form.addEventListener("submit", async (e) => {
     enableChatInput(); // Re-enable input
 
     addBotMessage(data.answer, data.graphBase64); // Pass answer text and graph if available
-  } catch {
+  } catch (err) {
     typingElem.remove();
     enableChatInput();
-    addMessage("Unable to reach the server.", "bot");
+    addMessage("You're offline. Please check your internet connection.", "bot");
     console.error(err);
   }
 });
