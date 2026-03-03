@@ -175,7 +175,7 @@ form.addEventListener("submit", async (e) => {
   } catch (err) {
     typingElem.remove();
     enableChatInput();
-    addMessage("You're offline. Please check your internet connection.", "bot");
+    addMessage("I'm unable to answer that question at this time.", "bot");
     console.error(err);
   }
 });
