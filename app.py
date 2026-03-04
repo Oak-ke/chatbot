@@ -11,26 +11,15 @@ graph = build_graph(llama_llm())
 def index():
     return render_template("index.html")
 
-conversation_history = [] # In-memory per session
+
 @app.route("/chat", methods=["POST"])
 def chat():
-    global conversation_history
     payload = request.get_json()
     question = payload.get("message", "")
     
-    # Include conversation memory in the question
-    context = "\n".join(
-        f"{msg['role']}: {msg['content']}" for msg in conversation_history[-5:] # Last 5 messages
-    )
-    question_with_context = f"{context}\nuser: {question}" if context else question
-    
     result = graph.invoke({
-        "question": question_with_context
+        "question": question
     })
-    
-    # Save to memory
-    conversation_history.append({"role": "user", "content": question})
-    conversation_history.append({"role": "bot", "content": result["answer"]})
     
     response = {
         "answer": result.get("answer", "No data found."),
