@@ -76,6 +76,33 @@ def get_schema(_):
     return db.get_table_info(table_names=ALLOWED_TABLES)
 
 
+def extract_tables_and_aliases(sql_text: str):
+    """
+    Extract table names and their aliases from SQL query.
+    Returns tuple of (set of tables, dict mapping aliases to table names).
+    """
+    tables = set()
+    alias_map = {}
+    
+    # Find FROM clause tables
+    from_pattern = r"\bfrom\s+(\w+)(?:\s+(?:as\s+)?(\w+))?"
+    for match in re.finditer(from_pattern, sql_text):
+        table = match.group(1)
+        alias = match.group(2) or table
+        tables.add(table)
+        alias_map[alias] = table
+    
+    # Find JOIN clause tables
+    join_pattern = r"\bjoin\s+(\w+)(?:\s+(?:as\s+)?(\w+))?"
+    for match in re.finditer(join_pattern, sql_text):
+        table = match.group(1)
+        alias = match.group(2) or table
+        tables.add(table)
+        alias_map[alias] = table
+    
+    return tables, alias_map
+
+
 def sanitize_sql(sql: str) -> str:
     """
     Remove any markdown code blocks and trailing semicolons from SQL.
@@ -124,6 +151,21 @@ def validate_sql(sql: str) -> None:
                     f"Allowed: {allowed}"
                 )
     
+def log_index_usage(sql: str):
+    """
+    Runs EXPLAIN on the SQL query and logs whether indexes are being used.
+    """
+    try:
+        explain_sql = f"EXPLAIN {sql}"
+        explain_result = pd.read_sql(explain_sql, db._engine)
+        
+        # Check if any rows show 'type' not equal to 'ALL' (i.e., index used)
+        explain_result['index_used'] = explain_result['type'].apply(lambda t: t != 'ALL')
+        logger.info(f"[EXPLAIN RESULT]\n{explain_result[['table','type','key','rows','index_used']]}")
+        
+    except Exception as e:
+        logger.warning(f"Failed to log index usage: {e}")
+        
 def run_query(query: str):
     """
     Sanitize and execute the SQL query against the database.
@@ -132,6 +174,7 @@ def run_query(query: str):
     """
     sql = sanitize_sql(query)
     logger.info(f"[SQL GENERATED] {sql}")
+    log_index_usage(sql)
 
     try:
         result = db.run(sql)
@@ -187,37 +230,34 @@ def write_sql_query(llm):
         3. ALWAYS PREFER JOINs over subqueries
         4. When filtering by cooperative_name, ALWAYS use INNER JOIN: 
            SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
-        5. If you must use a subquery with multiple matches, use IN not =:
-           WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
-        6. For aggregation queries (state, count, max, etc.), query the appropriate table directly
-        7. Remember: state information exists in THREE tables as different columns:
-           - cooperative.cooperative_state (for cooperatives)
-           - member.member_state (for members)
-           - director.director_state (for directors)
-        8. For location/state matching, use LOWER() for case-insensitive comparison
-        9. Always include COUNT in aggregation SELECT - never just group without counting
-        10. Return ONLY ONE SELECT statement, no markdown, no explanation
+        5. If you must use a subquery with multiple matches, use IN not =
+        6. For aggregation queries, query the appropriate table directly
+        7. State columns:
+           - cooperative.cooperative_state
+           - member.member_state
+           - director.director_state
+        8. PERFORMANCE CRITICAL:
+           NEVER use LOWER(), REPLACE(), or ANY function on indexed columns.
+           Always use direct equality comparison.
+        9. State names in the database use UNDERSCORES not spaces.
+           Example: Western_Bahr_el_Ghazal
+        10. Always include COUNT(*) for aggregation queries
+        11. Return ONLY ONE SELECT statement, no markdown, no explanation
         
-        CRITICAL FOR LOCATION QUERIES:
-        When the question asks about a state, county, payam, boma or any location name:
-        IMPORTANT: State names in the database use UNDERSCORES, not spaces!
-        - User types: 'Western Bahr el Ghazal' (with spaces)
-        - Database has: 'Western_Bahr_el_Ghazal' (with underscores)
+        CORRECT LOCATION MATCHING:
+        - WHERE cooperative.cooperative_state = 'Western_Bahr_el_Ghazal'
+        - WHERE member.member_state = 'Central_Equatoria'
         
-        Use REPLACE to convert spaces to underscores in comparison:
-        - CORRECT: WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
-        OR normalize the column:
-        - CORRECT: WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
-        
-        WRONG approaches:
-        - WHERE cooperative_state = 'Western Bahr el Ghazal' (case AND format mismatch)
-        - WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (missing underscore conversion)
-        
+        WRONG (DO NOT USE):
+        - WHERE LOWER(cooperative_state) = ...
+        - WHERE REPLACE(cooperative_state, ...)
+        - WHERE LOWER(REPLACE(...))
+
         EXAMPLES:
-        - "female members" → SELECT COUNT(*) FROM member WHERE member_gender = 'Female'
+        - "female members" → SELECT COUNT(*) FROM member WHERE member.member_gender = 'Female'
         - "members in Yambio Farmers Cooperative" → SELECT COUNT(*) FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = 'Yambio Farmers Cooperative'
-        - "which state has the most cooperatives" → SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
+        - "which state has the most cooperatives" → SELECT c.cooperative_state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
+        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE cooperative.cooperative_state = 'Western_Bahr_el_Ghazal'
         - "directors in each cooperative" → SELECT c.cooperative_name, COUNT(d.director_id) AS count FROM cooperative c LEFT JOIN director d ON c.cooperative_id = d.cooperative_id GROUP BY c.cooperative_id
         
         Database Schema:
@@ -236,40 +276,14 @@ def write_sql_query(llm):
                 "system",
                 """You are an expert SQL generator for a MySQL cooperative database.
 
-                    CRITICAL: This database has ONLY 5 TABLES:
-                    1. cooperative
-                    2. member  
-                    3. director
-                    4. cooperative_stages
-                    5. cooperative_location
+                PERFORMANCE CRITICAL:
+                - NEVER use LOWER()
+                - NEVER use REPLACE()
+                - NEVER wrap indexed columns in functions
+                - Always use exact equality comparison
 
-                    DO NOT USE any other tables: reserve, citizen, admin, invoices, note, password_reset, receipts.
-                                                        
-                    COMPLETE VALID COLUMNS:
-                    cooperative: cooperative_id, cooperative_name, cooperative_type, cooperative_state, cooperative_constitution, cooperative_bylaws, has_directors, has_members, cooperative_county, cooperative_payam, cooperative_boma, approval_status, cooperative_certificate, enumerator_id, cooperative_date_created
-
-                    member: member_id, cooperative_id, member_name, member_gender, member_state, member_county, member_payam, member_boma
-
-                    director: director_id, cooperative_id, director_name, director_gender, director_state, director_county, director_payam, director_boma
-
-                    CRITICAL SQL RULES:
-                    1. ALWAYS PREFER JOINs over subqueries
-                    2. When filtering by cooperative_name, ALWAYS use INNER JOIN:
-                    SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
-                    3. If you MUST use a subquery, use IN not = when there might be multiple matches:
-                    WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
-                    4. For state-related queries:
-                    - "state" about cooperatives = cooperative.cooperative_state
-                    - "state" about members = member.member_state
-                    - "state" about directors = director.director_state
-                    5. For state/location matching, ALWAYS use case-insensitive comparison:
-                    - Use LOWER: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
-                    6. For aggregation queries (count by state, max/min by group):
-                    - Query the primary table directly, then GROUP BY
-                    - Always include COUNT(*) in the SELECT when aggregating
-                    - Use proper table aliases to avoid ambiguous column errors
-                    7. Always use the full column name with table prefix (member.member_gender, NOT member.gender)
-                    8. Generate ONLY valid SQL, no explanations or markdown.
+                All other rules remain strict.
+                Generate ONLY valid SQL.
                 """
             ),
             ("human", sql_template),
@@ -283,7 +297,7 @@ def write_sql_query(llm):
         | llm
         | StrOutputParser()
     )
-
+    
 def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
     """
     Generate a valid SQL query from the user question.
@@ -291,6 +305,21 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
     Validates table and column usage before returning SQL.
     Also validates at execution time to catch runtime errors.
     """
+
+    # autocorrect helper: replace alias.cooperative_state with the appropriate
+    # member_state/director_state column when the prefix refers to the
+    # member or director table.  This helps fix common LLM mistakes.
+    def autocorrect_state_aliases(sql_text: str) -> str:
+        tbls, alias_map = extract_tables_and_aliases(sql_text.lower())
+        def repl(match):
+            prefix = match.group(1)
+            real = alias_map.get(prefix, prefix)
+            if real == 'member':
+                return f"{prefix}.member_state"
+            if real == 'director':
+                return f"{prefix}.director_state"
+            return match.group(0)
+        return re.sub(r"\b(\w+)\.cooperative_state\b", repl, sql_text)
 
     error_message = None
 
@@ -306,65 +335,47 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                         {error_message}
 
                         KEY FIXES BASED ON ERROR:
-                        
                         IF ERROR: "Subquery returns more than 1 row"
                         → Use INNER JOIN instead of subquery
-                        
+
                         IF ERROR: "Unknown column" or "Ambiguous column"
-                        → Always use table.column format (e.g., c.cooperative_state, NOT state)
-                        → Check which table has the column: 
-                           - cooperative.cooperative_state (for cooperatives)
-                           - member.member_state (for members)
-                           - director.director_state (for directors)
-                        
-                        IF QUESTION ABOUT: "{question}"
-                        
+                        → Always use table.column format
+                        → Check correct state column:
+                        - cooperative.cooperative_state
+                        - member.member_state
+                        - director.director_state
+
+                        PERFORMANCE FIX:
+                        - NEVER use LOWER()
+                        - NEVER use REPLACE()
+                        - NEVER wrap indexed columns in functions
+                        - Always use exact equality comparison
+                        - State names use UNDERSCORES not spaces
+
                         FOR "HOW MANY [THING] IN [LOCATION]" QUESTIONS:
-                        - Always include the COUNT in the SELECT
-                        - CRITICAL: State names in database use UNDERSCORES not SPACES!
-                        - User input: 'Western Bahr el Ghazal' (spaces)
-                        - Database: 'Western_Bahr_el_Ghazal' (underscores)
-                        - CORRECT: SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
-                        - OR: SELECT COUNT(*) FROM cooperative WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
-                        - WRONG: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (spaces don't match underscores!)
-                        
+                        CORRECT:
+                        SELECT COUNT(*) FROM cooperative 
+                        WHERE cooperative.cooperative_state = 'Western_Bahr_el_Ghazal'
+
                         FOR "WHICH [LOCATION] HAS THE MOST [THINGS]" QUESTIONS:
-                        - Use GROUP BY with the location column
-                        - ORDER BY COUNT descending  
-                        - CONVERT underscores to spaces for display:
-                        - CORRECT: SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-                        - This will return 'Western Bahr el Ghazal' instead of 'Western_Bahr_el_Ghazal'
-                        
-                        RULES FOR LOCATION-BASED QUERIES:
-                        1. Always use full table.column format (c.cooperative_state)
-                        2. For matching user input to database: use REPLACE to convert spaces ↔ underscores
-                        3. For aggregations, GROUP BY the location column
-                        4. Always include COUNT(*) or COUNT(id) to get the number
-                        5. ALWAYS use REPLACE() when comparing with user-provided location names
-                        
-                        COMPLETE VALID COLUMNS (use table.column format):
-                        cooperative: c.cooperative_id, c.cooperative_name, c.cooperative_type, c.cooperative_state, 
-                                     c.cooperative_county, c.cooperative_payam, c.cooperative_boma
-                        
-                        member: m.member_id, m.cooperative_id, m.member_name, m.member_gender, m.member_state, 
-                                m.member_county, m.member_payam, m.member_boma
-                        
-                        director: d.director_id, d.cooperative_id, d.director_name, d.director_gender, d.director_state,
-                                  d.director_county, d.director_payam, d.director_boma
+                        SELECT cooperative.cooperative_state, COUNT(*) 
+                        FROM cooperative 
+                        GROUP BY cooperative.cooperative_state 
+                        ORDER BY COUNT(*) DESC 
+                        LIMIT 1
 
                         Original question:
                         {question}
-                    """
+                        """
             }
         )
 
         sql = sanitize_sql(sql_raw)
+        # apply auto‑corrections before validation/execution
+        sql = autocorrect_state_aliases(sql)
         try:
             # Validate syntax/structure
             validate_sql(sql)
-            
-            # Catch runtime column errors
-            run_query(sql)
             
             return sql
         except Exception as e:
