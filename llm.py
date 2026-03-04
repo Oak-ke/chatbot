@@ -21,7 +21,6 @@ def llama_llm():
     return ChatOllama(
         model="qwen2.5-coder",
         base_url="http://localhost:11434",
-        temperature=0,
         max_tokens=256,
         top_p=1,
         num_ctx=512, # ensures full prompt is respected
