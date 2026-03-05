@@ -65,13 +65,7 @@ function addBotMessage(text, graphBase64) {
     textSpan.textContent = text;
   }
 
-  // Translate button
-  // const btn = document.createElement("button");
-  // btn.className = "translate-btn";
-  // btn.textContent = "Translate";
-
-  // let currentLang = "en"; // default language
-  // Language detection (simple Arabic regex)
+  // Language detection (Arabic regex)
   const isArabic = /[\u0600-\u06FF]/.test(text);
   let currentLang = isArabic ? "ar" : "en";
 
