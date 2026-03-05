@@ -5,7 +5,7 @@ from utils import translate_text
 
 app = Flask(__name__)
 llm = llama_llm()
-graph = build_graph(llama_llm())
+graph = build_graph(llm)
 
 @app.route("/")
 def index():
