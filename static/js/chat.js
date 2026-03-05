@@ -66,11 +66,18 @@ function addBotMessage(text, graphBase64) {
   }
 
   // Translate button
+  // const btn = document.createElement("button");
+  // btn.className = "translate-btn";
+  // btn.textContent = "Translate";
+
+  // let currentLang = "en"; // default language
+  // Language detection (simple Arabic regex)
+  const isArabic = /[\u0600-\u06FF]/.test(text);
+  let currentLang = isArabic ? "ar" : "en";
+
   const btn = document.createElement("button");
   btn.className = "translate-btn";
-  btn.textContent = "Translate";
-
-  let currentLang = "en"; // default language
+  btn.textContent = isArabic ? "Translate to English" : "Translate to Arabic";
 
   btn.onclick = async () => {
     // If there's no text to translate, alert user
@@ -97,8 +104,9 @@ function addBotMessage(text, graphBase64) {
 
       textSpan.textContent = data.translation;
 
+      // Toggle language state
       currentLang = currentLang === "en" ? "ar" : "en";
-      btn.textContent = currentLang === "en" ? "Translate" : "Original";
+      btn.textContent = currentLang === "en" ? "Translate to Arabic" : "Translate to English";
 
     } catch (err) {
       alert("Translation failed!");
