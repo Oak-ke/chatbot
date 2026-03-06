@@ -139,6 +139,14 @@ window.addEventListener("DOMContentLoaded", () => {
   addBotMessage("👋 Hello! I'm Co-op Magic AI Assistant. Ask me anything about cooperatives in South Sudan. I can translate both English and Arabic.");
 });
 
+window.addEventListener("offline", () => {
+  addBotMessage("You are currently offline. Some features may not work.");
+});
+
+window.addEventListener("online", () => {
+  addBotMessage("Connection restored.");
+});
+
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
 
@@ -149,6 +157,12 @@ form.addEventListener("submit", async (e) => {
 
   addMessage(message, "user");
   input.value = "";
+
+  // Detect offline BEFORE request
+  if (!navigator.onLine) {
+    addBotMessage("You appear to be offline. Please check your internet connection.");
+    return;
+  }
 
   disableChatInput(); // Disable input while waiting for response
 
@@ -177,7 +191,13 @@ form.addEventListener("submit", async (e) => {
   } catch (err) {
     typingElem.remove();
     enableChatInput();
-    addMessage("I'm unable to answer that question at this time.", "bot");
+
+    if (!navigator.onLine) {
+      addBotMessage("You appear to be offline. Please check your internet connection.", "bot");
+      console.error(err);
+    } else {
+      addBotMessage(err.message || "Sorry, something went wrong. Please try again later.", "bot");
+    }
     console.error(err);
   }
 });

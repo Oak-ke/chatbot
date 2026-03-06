@@ -447,7 +447,10 @@ def answer_user_query(question: str) -> str:
         response = run_query(sql)
     except Exception as e:
         logger.error(f"Query generation/execution failed: {str(e)}")
-        return "I'm unable to answer that question at this time."
+        return (
+            "I couldn't find information related to that question. "
+            "Try asking about cooperatives, members, directors, or locations."
+        )
 
     # Check for empty results
     if not response or response.strip() == "" or response.strip() == "0 rows in set":
