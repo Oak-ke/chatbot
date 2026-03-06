@@ -45,7 +45,7 @@ INTENT_MAP = {
     "cooperatives_total": ["number of cooperatives", "total cooperatives"],
     "members_total": ["total members", "number of members", "members"],
     "members_by_state": ["members per state", "members by state"],
-    "female_members": ["female members", "women members"],
+    "female_members": ["female members"],
     "male_members": ["male members"],
     "directors_total": ["directors", "total directors"],
     "visualize": ["visualize", "graph", "chart", "show trend"]
