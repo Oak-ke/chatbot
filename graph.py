@@ -40,15 +40,15 @@ class State(TypedDict):
 
 # Intent mapping
 INTENT_MAP = {
-    "system_name": ["system name", "name of system", "what is the system called"],
-    "system_info": ["system_info", "system information", "about system", "info", "tell me more"],
-    "cooperatives_total": ["cooperatives_total", "number of cooperatives", "cooperatives registered"],
-    "members_total": ["members_total", "total members", "members", "female members", "male members"],
-    "members_by_state": ["members_by_state", "members per state", "members by state"],
-    "female_members": ["female members"],
+    "system_name": ["system name", "name of system"],
+    "system_info": ["about co-op magic", "system details"],
+    "cooperatives_total": ["number of cooperatives", "total cooperatives"],
+    "members_total": ["total members", "number of members", "members"],
+    "members_by_state": ["members per state", "members by state"],
+    "female_members": ["female members", "women members"],
     "male_members": ["male members"],
-    "directors_total": ["directors_total", "number of directors", "directors"],
-    "visualize": ["visualize", "graph", "plot", "chart", "show me trends"]
+    "directors_total": ["directors", "total directors"],
+    "visualize": ["visualize", "graph", "chart", "show trend"]
 }
 
 # Database setup
@@ -56,7 +56,7 @@ db_uri = os.getenv("DB_URI")
 db = SQLDatabase.from_uri(db_uri)
 
 # Allowed tables that the LLM is allowed to query
-ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "cooperative_stages"}
+ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "cooperative_stages", "deregistration"}
 
 # Whitelist of allowed columns per table
 ALLOWED_COLUMNS = {
@@ -64,7 +64,8 @@ ALLOWED_COLUMNS = {
     "member": {"cooperative_id", "member_id", "member_name", "member_gender", "member_state", "member_county", "member_payam", "member_boma"},
     "director": {"cooperative_id", "director_id", "director_name", "director_gender", "director_payam", "director_state", "director_county", "director_boma"},
     "cooperative_location": {"cooperative_id", "state", "county", "payam", "boma"},
-    "cooperative_stages": {"coop_id", "stage", "status", "nexr_stage"}
+    "cooperative_stages": {"coop_id", "stage", "date-created", "status", "reason", "next_stage"},
+    "deregistration": {"reason", "status", "coop_id", "date_created"}
 }
 
 # Helper functions
@@ -198,13 +199,14 @@ def write_sql_query(llm):
     sql_template = """
         You are a MySQL SQL generator for a cooperative database.
 
-        CRITICAL: ONLY 5 TABLES EXIST IN THIS DATABASE
+        CRITICAL: ONLY 6 TABLES EXIST IN THIS DATABASE
         The ONLY tables available are:
         1. cooperative
         2. member
         3. director
         4. cooperative_stages
         5. cooperative_location
+        6. deregistration
         
         Do NOT use any other tables (reserve, admin, citizen, invoices, note, password_reset, receipts. DO NOT EXIST).
 
@@ -279,13 +281,14 @@ def write_sql_query(llm):
                 "system",
                 """You are an expert SQL generator for a MySQL cooperative database.
 
-                    If you use ANY table other than the 5 listed, your output is INVALID.
-                    CRITICAL: This database has ONLY 5 TABLES:
+                    If you use ANY table other than the 6 listed, your output is INVALID.
+                    CRITICAL: This database has ONLY 6 TABLES:
                     1. cooperative
                     2. member  
                     3. director
                     4. cooperative_stages
                     5. cooperative_location
+                    6. deregistration
 
                     DO NOT USE any other tables: reserve, citizen, admin, invoices, note, password_reset, receipts.
                                                         
