@@ -195,14 +195,14 @@ def write_sql_query(llm):
         2. Do NOT invent column names or table names
         3. ALWAYS PREFER JOINs over subqueries
         4. When filtering by cooperative_name, ALWAYS use INNER JOIN: 
-           SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
+            SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
         5. If you must use a subquery with multiple matches, use IN not =:
-           WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
+            WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
         6. For aggregation queries (state, count, max, etc.), query the appropriate table directly
         7. Remember: state information exists in THREE tables as different columns:
-           - cooperative.cooperative_state (for cooperatives)
-           - member.member_state (for members)
-           - director.director_state (for directors)
+            - cooperative.cooperative_state (for cooperatives)
+            - member.member_state (for members)
+            - director.director_state (for directors)
         8. For location/state matching, use LOWER() for case-insensitive comparison
         9. Always include COUNT in aggregation SELECT - never just group without counting
         10. Return ONLY ONE SELECT statement, no markdown, no explanation
@@ -254,7 +254,7 @@ def write_sql_query(llm):
                     6. deregistration
 
                     DO NOT USE any other tables: reserve, citizen, admin, invoices, note, password_reset, receipts.
-                                                                        
+                                                                                                        
                     COMPLETE VALID COLUMNS:
                     cooperative: cooperative_id, cooperative_name, cooperative_type, cooperative_state, cooperative_constitution, cooperative_bylaws, has_directors, has_members, cooperative_county, cooperative_payam, cooperative_boma, approval_status, cooperative_certificate, enumerator_id, cooperative_date_created
 
@@ -326,9 +326,9 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                         IF ERROR: "Unknown column" or "Ambiguous column"
                         → Always use table.column format (e.g., c.cooperative_state, NOT state)
                         → Check which table has the column: 
-                           - cooperative.cooperative_state (for cooperatives)
-                           - member.member_state (for members)
-                           - director.director_state (for directors)
+                            - cooperative.cooperative_state (for cooperatives)
+                            - member.member_state (for members)
+                            - director.director_state (for directors)
                         
                         IF QUESTION ABOUT: "{question}"
                         
@@ -462,7 +462,24 @@ def detect_lan_and_translate(state: State, llm):
 # Intent detection
 def detect_intent(state: State, llm):
     prompt = f"Classify the intent into one of: {list(INTENT_MAP.keys())}\nQuestion: {state['question']}"
-    raw_intent = llm.invoke([HumanMessage(content=prompt)]).content.strip().lower()
+    
+    # Get the raw response object
+    response = llm.invoke([HumanMessage(content=prompt)])
+    
+    # FIX: Safely extract the content whether it's a string or a list of blocks
+    content = response.content
+    if isinstance(content, list):
+        # Extract text from the first content block
+        first_part = content[0]
+        if isinstance(first_part, dict):
+            raw_intent = first_part.get('text', '')
+        else:
+            raw_intent = getattr(first_part, 'text', str(first_part))
+    else:
+        # It's a normal string
+        raw_intent = str(content)
+
+    raw_intent = raw_intent.strip().lower()
 
     for canonical, aliases in INTENT_MAP.items():
         if any(alias.lower() in raw_intent for alias in aliases):
