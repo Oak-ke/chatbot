@@ -1,16 +1,19 @@
 from flask import Flask, request, jsonify, render_template
 from graph import build_graph
-from llm import llama_llm
+from llm import gemini_flash_fast  # Import the fast model for the translation route
 from utils import translate_text
 
 app = Flask(__name__)
-llm = llama_llm()
-graph = build_graph(llm)
+
+# Initialize the fast model for the standalone translation route
+llm_flash = gemini_flash_fast()
+
+# The graph now handles its own internal LLM routing
+graph = build_graph()
 
 @app.route("/")
 def index():
     return render_template("index.html")
-
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -39,7 +42,8 @@ def translate():
     if not text:
         return jsonify({"error": "No text provided"}), 400
     
-    translated, source_lang = translate_text(text, llm, target_lang=target_lang)    
+    # Use the fast, cost-efficient model for standalone translations
+    translated, source_lang = translate_text(text, llm_flash, target_lang=target_lang)    
     return jsonify({
         "translation": translated,
         "source_lang": source_lang
