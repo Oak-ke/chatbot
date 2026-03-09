@@ -1,4 +1,6 @@
-data/
-__pycache__/
+echo ".env" >> .gitignore
+echo ".venv/" >> .gitignore
+echo "__pycache__/" >> .gitignore
 .env
-.venv
+.venv/
+__pycache__/
