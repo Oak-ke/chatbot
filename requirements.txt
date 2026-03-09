@@ -7,6 +7,6 @@ matplotlib
 langchain-community
 langchain-ollama
 openai
-mysql-connector-python==8.0.32
+pymysql
 langchain-google-genai
 google-generativeai
