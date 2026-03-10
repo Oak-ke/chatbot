@@ -67,7 +67,7 @@ ALLOWED_COLUMNS = {
     "member": {"cooperative_id", "member_id", "member_name", "member_gender", "member_state", "member_county", "member_payam", "member_boma"},
     "director": {"cooperative_id", "director_id", "director_name", "director_gender", "director_payam", "director_state", "director_county", "director_boma"},
     "cooperative_location": {"cooperative_id", "state", "county", "payam", "boma"},
-    "cooperative_stages": {"coop_id", "stage", "date-created", "status", "reason", "next_stage"},
+    "cooperative_stages": {"coop_id", "stage", "date_created", "status", "reason", "next_stage"},
     "deregistration": {"reason", "status", "coop_id", "date_created"}
 }
 
