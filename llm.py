@@ -12,7 +12,7 @@ def gemini_pro_sql():
     High reasoning capabilities for complex JOINs and schema mapping.
     """
     return ChatGoogleGenerativeAI(
-        model="gemini-3.1-pro-preview",
+        model="gemini-2.5-pro",
         temperature=0,  # Critical for SQL to stay consistent
         max_output_tokens=1024, # Increased for complex SQL queries
         google_api_key=os.getenv("GOOGLE_API_KEY")
@@ -24,8 +24,8 @@ def gemini_flash_fast():
     Fast, cost-efficient, and perfect for simple intent/translation.
     """
     return ChatGoogleGenerativeAI(
-        model="gemini-3-flash-preview",
-        temperature=0.3, # Slight creativity for natural chat
+        model="gemini-2.5-flash",
+        temperature=0, # Slight creativity for natural chat
         max_output_tokens=256,
         google_api_key=os.getenv("GOOGLE_API_KEY")
     )
