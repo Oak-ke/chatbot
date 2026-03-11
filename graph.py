@@ -404,13 +404,11 @@ def answer_user_query(question: str) -> str:
                     "system",
                     """You are answering a user's question when the database returned no results.
 
-                        RULES FOR EMPTY/NULL RESULTS:
-                        1. Do NOT say "No data found" - be more specific
-                        2. Infer from the question why there might be no results
-                        3. Explain the situation naturally
-                        4. Be empathetic and informative
-                        5. Keep answer to 1-2 sentences
-                        6. Do NOT mention SQL, queries, or technical details
+                    RULES:
+                    - Do NOT say 'No data found'
+                    - Provide a natural explanation
+                    - Keep answer to 1-2 sentences
+                    - Do NOT mention SQL
                     """
                 ),
                 ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
