@@ -10,3 +10,5 @@ openai
 mysql-connector-python==8.0.32
 langchain-google-genai
 google-generativeai
+faiss-cpu
+apscheduler

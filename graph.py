@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 import matplotlib
 matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
 import matplotlib.pyplot as plt
+from vector_db import get_vector_db
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ INTENT_MAP = {
 # Database setup
 db_uri = os.getenv("DB_URI")
 db = SQLDatabase.from_uri(db_uri)
+
+# Load FAISS vector index once at startup
+vector_db = get_vector_db()
+logger.info("Vector index loaded successfully.")
 
 # Allowed tables that the LLM is allowed to query
 ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "cooperative_stages", "deregistration"}
@@ -140,6 +145,22 @@ def log_index_usage(sql: str):
     except Exception as e:
         logger.warning(f"Failed to log index usage: {e}")
         
+def semantic_search(question: str, k: int = 5):
+    """
+    Retrieve relevant documents from the FAISS vector database.
+    Used to provide semantic context to the LLM.
+    """
+    if vector_db is None:
+        logger.warning("Vector DB not available for semantic search.")
+        return []
+
+    try:
+        docs = vector_db.similarity_search(question, k=k)
+        return [doc.page_content for doc in docs]
+    except Exception as e:
+        logger.warning(f"Vector search failed: {e}")
+        return []
+    
 def run_query(query: str):
     sql = sanitize_sql(query)
     logger.info(f"[SQL GENERATED] {sql}")
@@ -384,12 +405,84 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                 raise RuntimeError(f"Unable to generate valid SQL after {max_retries} attempts: {error_message}")
 
 # Natural answer generation
+# def answer_user_query(question: str) -> str:
+#     try:
+#         # Use PRO for the SQL logic
+#         sql = generate_valid_sql(question, llm_pro)
+#         logger.info(f"[FINAL SQL USED] {sql}")
+#         response = run_query(sql)
+#     except Exception as e:
+#         logger.error(f"Query generation/execution failed: {str(e)}")
+#         return (
+#             "I couldn't find information related to that question. "
+#             "Try asking about cooperatives, members, directors, or locations."
+#         )
+
+#     if not response or response.strip() == "" or response.strip() == "0 rows in set":
+#         prompt = ChatPromptTemplate.from_messages(
+#             [
+#                 (
+#                     "system",
+#                     """You are answering a user's question when the database returned no results.
+
+#                         RULES FOR EMPTY/NULL RESULTS:
+#                         1. Do NOT say "No data found" - be more specific
+#                         2. Infer from the question why there might be no results
+#                         3. Explain the situation naturally
+#                         4. Be empathetic and informative
+#                         5. Keep answer to 1-2 sentences
+#                         6. Do NOT mention SQL, queries, or technical details
+#                     """
+#                 ),
+#                 ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
+#             ]
+#         )
+#         messages = prompt.format_messages()
+#         # Use FLASH for natural text generation
+#         return llm_flash.invoke(messages).content.strip()
+
+#     prompt = ChatPromptTemplate.from_messages(
+#         [
+#             (
+#                 "system",
+#                 """You are answering a user's question based on SQL query results.
+
+#                     CRITICAL RULES:
+#                     1. Give ONLY the answer to the user's question - be DIRECT and CONCISE
+#                     2. Answer in ONE sentence maximum
+#                     3. Do NOT mention SQL or technical details
+#                     4. For COUNT or numeric results: ALWAYS include the number
+#                     5. If result contains NULL, explain what's missing
+#                     WORD LIMIT: Keep your answer under 30 words.
+#                 """
+#             ),
+#             ("human", f"Question: {question}\nResult: {response}\nAnswer:"),
+#         ]
+#     )
+    
+#     messages = prompt.format_messages()
+#     # Use FLASH for natural text generation
+#     answer = llm_flash.invoke(messages).content.strip()
+    
+#     if len(answer) > 300:
+#         answer = answer[:300].rsplit('.', 1)[0] + "."
+    
+#     return answer
 def answer_user_query(question: str) -> str:
     try:
-        # Use PRO for the SQL logic
+        # Retrieve semantic context from vector database
+        context_docs = semantic_search(question)
+
+        context = ""
+        if context_docs:
+            context = "\n".join(context_docs[:3])
+
+        # Generate SQL query
         sql = generate_valid_sql(question, llm_pro)
         logger.info(f"[FINAL SQL USED] {sql}")
+
         response = run_query(sql)
+
     except Exception as e:
         logger.error(f"Query generation/execution failed: {str(e)}")
         return (
@@ -411,39 +504,62 @@ def answer_user_query(question: str) -> str:
                     - Do NOT mention SQL
                     """
                 ),
-                ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
+                (
+                    "human",
+                    f"""
+                    Context:
+                    {context}
+
+                    User Question:
+                    {question}
+
+                    Database returned no results.
+                    Generate explanation:
+                    """
+                ),
             ]
         )
+
         messages = prompt.format_messages()
-        # Use FLASH for natural text generation
         return llm_flash.invoke(messages).content.strip()
 
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                """You are answering a user's question based on SQL query results.
+                """You answer questions using database results and context.
 
-                    CRITICAL RULES:
-                    1. Give ONLY the answer to the user's question - be DIRECT and CONCISE
-                    2. Answer in ONE sentence maximum
-                    3. Do NOT mention SQL or technical details
-                    4. For COUNT or numeric results: ALWAYS include the number
-                    5. If result contains NULL, explain what's missing
-                    WORD LIMIT: Keep your answer under 30 words.
+                RULES:
+                - One sentence only
+                - Include numbers if present
+                - Do NOT mention SQL
+                - Keep under 30 words
                 """
             ),
-            ("human", f"Question: {question}\nResult: {response}\nAnswer:"),
+            (
+                "human",
+                f"""
+                Context:
+                {context}
+
+                Question:
+                {question}
+
+                SQL Result:
+                {response}
+
+                Answer:
+                """
+            ),
         ]
     )
-    
+
     messages = prompt.format_messages()
-    # Use FLASH for natural text generation
     answer = llm_flash.invoke(messages).content.strip()
-    
+
     if len(answer) > 300:
         answer = answer[:300].rsplit('.', 1)[0] + "."
-    
+
     return answer
 
 # Language detection and translation
