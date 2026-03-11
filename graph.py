@@ -63,7 +63,7 @@ ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "
 
 # Whitelist of allowed columns per table
 ALLOWED_COLUMNS = {
-    "cooperative": {"cooperative_id", "cooperative_name", "cooperative_type", "cooperative_state", "cooperative_constitution", "cooperative_bylaws", "has_directors", "cooperative_state", "cooperative_boma", "approval_statusregisted", "cooperative_certificate"},
+    "cooperative": {"cooperative_id", "cooperative_name", "cooperative_type", "cooperative_state", "cooperative_constitution", "cooperative_bylaws", "has_directors", "cooperative_state", "cooperative_boma", "approval_status", "cooperative_certificate"},
     "member": {"cooperative_id", "member_id", "member_name", "member_gender", "member_state", "member_county", "member_payam", "member_boma"},
     "director": {"cooperative_id", "director_id", "director_name", "director_gender", "director_payam", "director_state", "director_county", "director_boma"},
     "cooperative_location": {"cooperative_id", "state", "county", "payam", "boma"},
@@ -404,13 +404,11 @@ def answer_user_query(question: str) -> str:
                     "system",
                     """You are answering a user's question when the database returned no results.
 
-                        RULES FOR EMPTY/NULL RESULTS:
-                        1. Do NOT say "No data found" - be more specific
-                        2. Infer from the question why there might be no results
-                        3. Explain the situation naturally
-                        4. Be empathetic and informative
-                        5. Keep answer to 1-2 sentences
-                        6. Do NOT mention SQL, queries, or technical details
+                    RULES:
+                    - Do NOT say 'No data found'
+                    - Provide a natural explanation
+                    - Keep answer to 1-2 sentences
+                    - Do NOT mention SQL
                     """
                 ),
                 ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
