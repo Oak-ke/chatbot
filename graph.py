@@ -458,7 +458,17 @@ def answer_user_query(question: str) -> str:
         )
 
         messages = prompt.format_messages()
-        return llm_flash.invoke(messages).content.strip()
+        resp = llm_flash.invoke(messages)
+        content = resp.content
+        # Safely extract text even if content is list
+        if isinstance(content, list):
+            first = content[0]
+            if isinstance(first, dict):
+                return first.get("text", "").strip()
+            else:
+                return str(first).strip()
+        else:
+            return str(content).strip()
 
     prompt = ChatPromptTemplate.from_messages(
         [
@@ -492,7 +502,17 @@ def answer_user_query(question: str) -> str:
     )
 
     messages = prompt.format_messages()
-    answer = llm_flash.invoke(messages).content.strip()
+    resp = llm_flash.invoke(messages)
+    content = resp.content
+    # Safely extract text even if content is list
+    if isinstance(content, list):
+        first = content[0]
+        if isinstance(first, dict):
+            answer = first.get("text", "").strip()
+        else:
+            answer = str(first).strip()
+    else:
+        answer = str(content).strip()
 
     if len(answer) > 300:
         answer = answer[:300].rsplit('.', 1)[0] + "."
