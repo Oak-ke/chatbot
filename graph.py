@@ -405,69 +405,6 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
                 raise RuntimeError(f"Unable to generate valid SQL after {max_retries} attempts: {error_message}")
 
 # Natural answer generation
-# def answer_user_query(question: str) -> str:
-#     try:
-#         # Use PRO for the SQL logic
-#         sql = generate_valid_sql(question, llm_pro)
-#         logger.info(f"[FINAL SQL USED] {sql}")
-#         response = run_query(sql)
-#     except Exception as e:
-#         logger.error(f"Query generation/execution failed: {str(e)}")
-#         return (
-#             "I couldn't find information related to that question. "
-#             "Try asking about cooperatives, members, directors, or locations."
-#         )
-
-#     if not response or response.strip() == "" or response.strip() == "0 rows in set":
-#         prompt = ChatPromptTemplate.from_messages(
-#             [
-#                 (
-#                     "system",
-#                     """You are answering a user's question when the database returned no results.
-
-#                         RULES FOR EMPTY/NULL RESULTS:
-#                         1. Do NOT say "No data found" - be more specific
-#                         2. Infer from the question why there might be no results
-#                         3. Explain the situation naturally
-#                         4. Be empathetic and informative
-#                         5. Keep answer to 1-2 sentences
-#                         6. Do NOT mention SQL, queries, or technical details
-#                     """
-#                 ),
-#                 ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
-#             ]
-#         )
-#         messages = prompt.format_messages()
-#         # Use FLASH for natural text generation
-#         return llm_flash.invoke(messages).content.strip()
-
-#     prompt = ChatPromptTemplate.from_messages(
-#         [
-#             (
-#                 "system",
-#                 """You are answering a user's question based on SQL query results.
-
-#                     CRITICAL RULES:
-#                     1. Give ONLY the answer to the user's question - be DIRECT and CONCISE
-#                     2. Answer in ONE sentence maximum
-#                     3. Do NOT mention SQL or technical details
-#                     4. For COUNT or numeric results: ALWAYS include the number
-#                     5. If result contains NULL, explain what's missing
-#                     WORD LIMIT: Keep your answer under 30 words.
-#                 """
-#             ),
-#             ("human", f"Question: {question}\nResult: {response}\nAnswer:"),
-#         ]
-#     )
-    
-#     messages = prompt.format_messages()
-#     # Use FLASH for natural text generation
-#     answer = llm_flash.invoke(messages).content.strip()
-    
-#     if len(answer) > 300:
-#         answer = answer[:300].rsplit('.', 1)[0] + "."
-    
-#     return answer
 def answer_user_query(question: str) -> str:
     try:
         # Retrieve semantic context from vector database
