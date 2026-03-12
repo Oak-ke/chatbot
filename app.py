@@ -22,7 +22,12 @@ app = Flask(__name__)
 # Redis configuration
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
 app.config["SESSION_TYPE"] = os.getenv("SESSION_TYPE")
-app.config["SESSION_REDIS"] = redis.Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), decode_responses=True)
+
+app.config["SESSION_REDIS"] = redis.Redis(
+    host=os.getenv("REDIS_HOST"),
+    port=int(os.getenv("REDIS_PORT"))
+)
+
 app.config["SESSION_PERMANENT"] = os.getenv("SESSION_PERMANENT") == "True"
 app.config["SESSION_USE_SIGNER"] = os.getenv("SESSION_USE_SIGNER") == "True"
 app.config["SESSION_KEY_PREFIX"] = os.getenv("SESSION_KEY_PREFIX")
@@ -74,10 +79,6 @@ def chat():
     # Pass thread_id via config, not in the input state
     config = {"configurable": {"thread_id": session["session_id"]}}
 
-    # result = graph.invoke({
-    #     "question": question,
-    #     "session_id": session["session_id"]
-    # })
     result = graph.invoke(
         {"question": question},
         config=config
