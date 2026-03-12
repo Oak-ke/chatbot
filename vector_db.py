@@ -2,12 +2,16 @@ import os
 import time
 import pandas as pd
 from dotenv import load_dotenv
-
+import logging
+from logging_config import setup_logging
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_community.utilities import SQLDatabase
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -17,8 +21,8 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 VECTOR_INDEX_PATH = "vector_index"
 TIMESTAMP_FILE = "vector_last_update.txt"
 
-BATCH_SIZE = 3000
-BATCH_SLEEP = 60
+BATCH_SIZE = 500
+BATCH_SLEEP = 15
 
 _vector_db_instance = None
 
@@ -243,23 +247,80 @@ def build_vector_db():
 
 
 # Incremental update
+# def update_vector_index():
+
+#     global _vector_db_instance
+
+#     if _vector_db_instance is None:
+#         _vector_db_instance = build_vector_db()
+
+#     last_time = get_last_update_time()
+
+#     print("Checking for new database rows...")
+
+#     docs = fetch_documents(last_time)
+
+#     if not docs:
+#         print("No new documents.")
+#         return _vector_db_instance
+
+#     splits = split_documents(docs)
+
+#     embeddings = GoogleGenerativeAIEmbeddings(
+#         model="gemini-embedding-001",
+#         google_api_key=GOOGLE_API_KEY
+#     )
+
+#     new_index = FAISS.from_documents(splits, embeddings)
+
+#     _vector_db_instance.merge_from(new_index)
+
+#     _vector_db_instance.save_local(VECTOR_INDEX_PATH)
+
+#     set_last_update_time(pd.Timestamp.now())
+
+#     print("Vector index updated.")
+
+#     return _vector_db_instance
+
+# vector_db.py (refactored update_vector_index)
 def update_vector_index():
+    """
+    Incrementally update the FAISS vector index with new database rows.
+    If no new data exists, reuse the saved index to avoid unnecessary API calls.
+    """
 
     global _vector_db_instance
 
+    # Step 1: Load existing index if not already loaded
     if _vector_db_instance is None:
-        _vector_db_instance = build_vector_db()
+        if os.path.exists(VECTOR_INDEX_PATH):
+            logger.info("Loading existing FAISS index...")
+            embeddings = GoogleGenerativeAIEmbeddings(
+                model="gemini-embedding-001",
+                google_api_key=GOOGLE_API_KEY
+            )
+            _vector_db_instance = FAISS.load_local(
+                VECTOR_INDEX_PATH,
+                embeddings,
+                allow_dangerous_deserialization=True
+            )
+            logger.info("Existing vector index loaded.")
+        else:
+            logger.info("No existing index found. Building from scratch...")
+            return build_vector_db()
 
+    # Step 2: Check for new documents
     last_time = get_last_update_time()
-
-    print("Checking for new database rows...")
-
-    docs = fetch_documents(last_time)
+    docs = fetch_documents(since=last_time)
 
     if not docs:
-        print("No new documents.")
+        logger.info("No new documents found. Using existing vector index.")
         return _vector_db_instance
 
+    logger.info(f"Found {len(docs)} new documents. Updating vector index...")
+
+    # Step 3: Split documents
     splits = split_documents(docs)
 
     embeddings = GoogleGenerativeAIEmbeddings(
@@ -267,15 +328,23 @@ def update_vector_index():
         google_api_key=GOOGLE_API_KEY
     )
 
-    new_index = FAISS.from_documents(splits, embeddings)
+    # Step 4: Embed in batches to avoid rate limits
+    total_batches = (len(splits) + BATCH_SIZE - 1) // BATCH_SIZE
+    for i in range(0, len(splits), BATCH_SIZE):
+        batch = splits[i:i + BATCH_SIZE]
+        logger.info(f"Embedding batch {i // BATCH_SIZE + 1}/{total_batches}...")
+        new_index = FAISS.from_documents(batch, embeddings)
 
-    _vector_db_instance.merge_from(new_index)
+        _vector_db_instance.merge_from(new_index)
 
+        if i + BATCH_SIZE < len(splits):
+            logger.info(f"Sleeping for {BATCH_SLEEP}s to respect API rate limits...")
+            time.sleep(BATCH_SLEEP)
+
+    # Step 5: Save updated index
     _vector_db_instance.save_local(VECTOR_INDEX_PATH)
-
     set_last_update_time(pd.Timestamp.now())
-
-    print("Vector index updated.")
+    logger.info("Vector index successfully updated.")
 
     return _vector_db_instance
 
@@ -285,6 +354,8 @@ def get_vector_db():
     global _vector_db_instance
 
     if _vector_db_instance is None:
+        logger.info("Loading FAISS vector database...")
         _vector_db_instance = build_vector_db()
+        logger.info("Vector DB loaded successfully.")
 
     return _vector_db_instance

@@ -1,12 +1,36 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, session
+from flask_session import Session
+import uuid
+import redis
+import logging
 from graph import build_graph
 from llm import gemini_flash_fast  # Import the fast model for the translation route
 from utils import translate_text
 import vector_db
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
+from logging_config import setup_logging
+from dotenv import load_dotenv
+
+load_dotenv()
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+# Redis configuration
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY")
+app.config["SESSION_TYPE"] = os.getenv("SESSION_TYPE")
+app.config["SESSION_REDIS"] = redis.Redis(host=os.getenv("REDIS_HOST"), port=int(os.getenv("REDIS_PORT")), decode_responses=True)
+app.config["SESSION_PERMANENT"] = os.getenv("SESSION_PERMANENT") == "True"
+app.config["SESSION_USE_SIGNER"] = os.getenv("SESSION_USE_SIGNER") == "True"
+app.config["SESSION_KEY_PREFIX"] = os.getenv("SESSION_KEY_PREFIX")
+app.config["PERMANENT_SESSION_LIFETIME"] = int(os.getenv("SESSION_LIFETIME"))
+
+Session(app)
+
+logger.info("Redis session manager started.")
 
 # Initialize the fast model for the standalone translation route
 llm_flash = gemini_flash_fast()
@@ -25,6 +49,7 @@ scheduler.add_job(
 )
 
 scheduler.start()
+logger.info("Vector index background updater started.")
 
 @app.route("/")
 def index():
@@ -32,19 +57,38 @@ def index():
 
 @app.route("/chat", methods=["POST"])
 def chat():
+    """
+    Main chatbot endpoint.
+    Handles concurrent users through Redis sessions.
+    """
+
+    if "session_id" not in session:
+        session["session_id"] = str(uuid.uuid4())
+        logger.info(f"[NEW SESSION] {session['session_id']}")
+
     payload = request.get_json()
     question = payload.get("message", "")
+
+    logger.info(f"[USER QUESTION] {question}")
     
-    result = graph.invoke({
-        "question": question
-    })
-    
-    response = {
-        "answer": result.get("answer", "No data found."),
+    # Pass thread_id via config, not in the input state
+    config = {"configurable": {"thread_id": session["session_id"]}}
+
+    # result = graph.invoke({
+    #     "question": question,
+    #     "session_id": session["session_id"]
+    # })
+    result = graph.invoke(
+        {"question": question},
+        config=config
+    )
+
+    logger.info("[GRAPH EXECUTION COMPLETE]")
+
+    return jsonify({
+        "answer": result.get("answer"),
         "graphBase64": result.get("graph_base64")
-    }
-    
-    return jsonify(response)
+    })
 
 # health check
 @app.route("/health")

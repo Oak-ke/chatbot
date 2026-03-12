@@ -7,8 +7,12 @@ matplotlib
 langchain-community
 langchain-ollama
 openai
-mysql-connector-python==8.0.32
+pymysql
 langchain-google-genai
 google-generativeai
 faiss-cpu
 apscheduler
+redis
+cachetools
+Flask-Session==0.6.0
+langgraph-checkpoint
