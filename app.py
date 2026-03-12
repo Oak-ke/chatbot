@@ -10,6 +10,7 @@ import vector_db
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from logging_config import setup_logging
+from llm_cache import get_cached_answer, store_cached_answer
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -76,6 +77,18 @@ def chat():
 
     logger.info(f"[USER QUESTION] {question}")
     
+    # Check Redis LLM cache first
+    cached = get_cached_answer(question)
+
+    if cached:
+        logger.info("LLM CACHE HIT")
+        return jsonify(cached)
+
+    logger.info("LLM CACHE MISS")
+    
+    logger.info(f"LLM CACHE HIT: {question}")
+    logger.info(f"LLM CACHE MISS: {question}")
+    
     # Pass thread_id via config, not in the input state
     config = {"configurable": {"thread_id": session["session_id"]}}
 
@@ -86,10 +99,15 @@ def chat():
 
     logger.info("[GRAPH EXECUTION COMPLETE]")
 
-    return jsonify({
+    response = {
         "answer": result.get("answer"),
         "graphBase64": result.get("graph_base64")
-    })
+    }
+
+    # store result
+    store_cached_answer(question, response)
+
+    return jsonify(response)
 
 # health check
 @app.route("/health")
