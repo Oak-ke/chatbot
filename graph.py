@@ -156,7 +156,15 @@ def semantic_search(question: str, k: int = 5):
 
     try:
         docs = vector_db.similarity_search(question, k=k)
+
+        logger.info(f"[VECTOR SEARCH] Query: {question}")
+        logger.info(f"[VECTOR SEARCH] Retrieved {len(docs)} docs")
+
+        for i, d in enumerate(docs[:3]):
+            logger.info(f"[VECTOR DOC {i+1}] {d.page_content[:120]}")
+
         return [doc.page_content for doc in docs]
+
     except Exception as e:
         logger.warning(f"Vector search failed: {e}")
         return []
