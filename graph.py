@@ -635,7 +635,11 @@ def select_data(state: State):
         sql = generate_valid_sql(state["question"], llm_pro)
         df = run_query_df(sql)
         answer = answer_user_query(state["question"])
-        return {"viz_data": df, "answer": answer}
+        
+        # Convert DataFrame to JSON for safe serialization
+        df_json = df.to_dict(orient="records")
+        
+        return {"viz_data": df_json, "answer": answer}
     
     return {"answer": answer_user_query(state["question"])}
 
@@ -660,7 +664,12 @@ def detect_chart_type(question: str) -> str:
     else: return "bar"
 
 def visualize_node(state: State):
-    df = state.get("viz_data")
+    df_json = state.get("viz_data")
+    if not df_json:
+        return {"graph_base64": None}
+
+    # Convert back to DataFrame for plotting
+    df = pd.DataFrame(df_json)
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         logger.warning("No dataframe available for visualization")
