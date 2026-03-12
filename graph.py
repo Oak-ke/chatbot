@@ -152,29 +152,6 @@ def log_index_usage(sql: str):
     except Exception as e:
         logger.warning(f"Failed to log index usage: {e}")
         
-# def semantic_search(question: str, k: int = 5):
-#     """
-#     Retrieve relevant documents from the FAISS vector database.
-#     Used to provide semantic context to the LLM.
-#     """
-#     if vector_db is None:
-#         logger.warning("Vector DB not available for semantic search.")
-#         return []
-
-#     try:
-#         docs = vector_db.similarity_search(question, k=k)
-
-#         logger.info(f"[VECTOR SEARCH] Query: {question}")
-#         logger.info(f"[VECTOR SEARCH] Retrieved {len(docs)} docs")
-
-#         for i, d in enumerate(docs[:3]):
-#             logger.info(f"[VECTOR DOC {i+1}] {d.page_content[:120]}")
-
-#         return [doc.page_content for doc in docs]
-
-#     except Exception as e:
-#         logger.warning(f"Vector search failed: {e}")
-#         return []
 def semantic_search(question: str, k: int = 5):
     """
     Retrieve semantic documents from FAISS.
@@ -202,23 +179,6 @@ def semantic_search(question: str, k: int = 5):
         logger.error(f"[VECTOR ERROR] {e}")
         return []
     
-# def run_query(query: str):
-#     sql = sanitize_sql(query)
-#     logger.info(f"[SQL GENERATED] {sql}")
-#     log_index_usage(sql)
-
-#     try:
-#         result = db.run(sql)
-#         logger.info(f"[SQL RESULT] {str(result)[:500]}")
-#         return result
-#     except Exception as e:
-#         error_msg = str(e)
-#         if "Unknown column" in error_msg:
-#             raise ValueError(f"Invalid column name in query. {error_msg}")
-#         elif "doesn't exist" in error_msg:
-#             raise ValueError(f"Table doesn't exist. {error_msg}")
-#         else:
-#             raise RuntimeError(f"Query execution failed: {error_msg}")
 def run_query(query: str):
     """
     Executes SQL queries with caching and validation.
