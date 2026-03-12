@@ -9,7 +9,9 @@ logger = logging.getLogger("cache")
 redis_client = redis.Redis(
     host="127.0.0.1", # force IPv4
     port=6379,
-    decode_responses=True
+    decode_responses=True,
+    socket_connect_timeout=2, # Prevents redis from stalling
+    socket_timeout=2
 )
 
 # In-memory TTL cache (fast access layer)
