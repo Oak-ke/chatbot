@@ -247,43 +247,6 @@ def build_vector_db():
 
 
 # Incremental update
-# def update_vector_index():
-
-#     global _vector_db_instance
-
-#     if _vector_db_instance is None:
-#         _vector_db_instance = build_vector_db()
-
-#     last_time = get_last_update_time()
-
-#     print("Checking for new database rows...")
-
-#     docs = fetch_documents(last_time)
-
-#     if not docs:
-#         print("No new documents.")
-#         return _vector_db_instance
-
-#     splits = split_documents(docs)
-
-#     embeddings = GoogleGenerativeAIEmbeddings(
-#         model="gemini-embedding-001",
-#         google_api_key=GOOGLE_API_KEY
-#     )
-
-#     new_index = FAISS.from_documents(splits, embeddings)
-
-#     _vector_db_instance.merge_from(new_index)
-
-#     _vector_db_instance.save_local(VECTOR_INDEX_PATH)
-
-#     set_last_update_time(pd.Timestamp.now())
-
-#     print("Vector index updated.")
-
-#     return _vector_db_instance
-
-# vector_db.py (refactored update_vector_index)
 def update_vector_index():
     """
     Incrementally update the FAISS vector index with new database rows.
