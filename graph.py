@@ -11,21 +11,29 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
+from langgraph.checkpoint.memory import MemorySaver
 import base64
 from io import BytesIO
 from dotenv import load_dotenv
 import matplotlib
 matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
 import matplotlib.pyplot as plt
+from vector_db import get_vector_db
+from cache import vector_cache, sql_cache
+from logging_config import setup_logging
 
 # Configure logging
+# logger = logging.getLogger(__name__)
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format="%(asctime)s | %(levelname)s | %(message)s"
+# )
+setup_logging()
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
 
 load_dotenv()
+
+memory = MemorySaver()
 
 # Initialize our Hybrid Models
 llm_pro = gemini_pro_sql()
@@ -58,12 +66,16 @@ INTENT_MAP = {
 db_uri = os.getenv("DB_URI")
 db = SQLDatabase.from_uri(db_uri)
 
+# Load FAISS vector index once at startup
+vector_db = get_vector_db()
+logger.info("Vector index loaded successfully.")
+
 # Allowed tables that the LLM is allowed to query
 ALLOWED_TABLES = {"member", "cooperative", "director", "cooperative_location", "cooperative_stages", "deregistration"}
 
 # Whitelist of allowed columns per table
 ALLOWED_COLUMNS = {
-    "cooperative": {"cooperative_id", "cooperative_name", "cooperative_type", "cooperative_state", "cooperative_constitution", "cooperative_bylaws", "has_directors", "cooperative_state", "cooperative_boma", "approval_statusregisted", "cooperative_certificate"},
+    "cooperative": {"cooperative_id", "cooperative_name", "cooperative_type", "cooperative_state", "cooperative_constitution", "cooperative_bylaws", "has_directors", "cooperative_state", "cooperative_boma", "approval_status", "cooperative_certificate"},
     "member": {"cooperative_id", "member_id", "member_name", "member_gender", "member_state", "member_county", "member_payam", "member_boma"},
     "director": {"cooperative_id", "director_id", "director_name", "director_gender", "director_payam", "director_state", "director_county", "director_boma"},
     "cooperative_location": {"cooperative_id", "state", "county", "payam", "boma"},
@@ -140,23 +152,60 @@ def log_index_usage(sql: str):
     except Exception as e:
         logger.warning(f"Failed to log index usage: {e}")
         
+def semantic_search(question: str, k: int = 5):
+    """
+    Retrieve semantic documents from FAISS.
+    Uses in-memory TTL cache to prevent repeated searches.
+    """
+
+    # Check cache first
+    if question in vector_cache:
+        logger.info(f"[VECTOR CACHE HIT] {question}")
+        return vector_cache[question]
+
+    try:
+        docs = vector_db.similarity_search(question, k=k)
+
+        results = [doc.page_content for doc in docs]
+
+        # Save to cache
+        vector_cache[question] = results
+
+        logger.info(f"[VECTOR SEARCH] Query executed | Docs retrieved: {len(results)}")
+
+        return results
+
+    except Exception as e:
+        logger.error(f"[VECTOR ERROR] {e}")
+        return []
+    
 def run_query(query: str):
+    """
+    Executes SQL queries with caching and validation.
+    """
+
     sql = sanitize_sql(query)
-    logger.info(f"[SQL GENERATED] {sql}")
-    log_index_usage(sql)
+
+    # Cache lookup
+    if sql in sql_cache:
+        logger.info("[SQL CACHE HIT]")
+        return sql_cache[sql]
+
+    logger.info(f"[SQL EXECUTE] {sql}")
 
     try:
         result = db.run(sql)
-        logger.info(f"[SQL RESULT] {str(result)[:500]}")
+
+        # Save result to cache
+        sql_cache[sql] = result
+
+        logger.info("[SQL SUCCESS]")
+
         return result
+
     except Exception as e:
-        error_msg = str(e)
-        if "Unknown column" in error_msg:
-            raise ValueError(f"Invalid column name in query. {error_msg}")
-        elif "doesn't exist" in error_msg:
-            raise ValueError(f"Table doesn't exist. {error_msg}")
-        else:
-            raise RuntimeError(f"Query execution failed: {error_msg}")
+        logger.error(f"[SQL ERROR] {e}")
+        raise
 
 # SQL generation
 def write_sql_query(llm):
@@ -386,10 +435,19 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
 # Natural answer generation
 def answer_user_query(question: str) -> str:
     try:
-        # Use PRO for the SQL logic
+        # Retrieve semantic context from vector database
+        context_docs = semantic_search(question)
+
+        context = ""
+        if context_docs:
+            context = "\n".join(context_docs[:3])
+
+        # Generate SQL query
         sql = generate_valid_sql(question, llm_pro)
         logger.info(f"[FINAL SQL USED] {sql}")
+
         response = run_query(sql)
+
     except Exception as e:
         logger.error(f"Query generation/execution failed: {str(e)}")
         return (
@@ -404,48 +462,89 @@ def answer_user_query(question: str) -> str:
                     "system",
                     """You are answering a user's question when the database returned no results.
 
-                        RULES FOR EMPTY/NULL RESULTS:
-                        1. Do NOT say "No data found" - be more specific
-                        2. Infer from the question why there might be no results
-                        3. Explain the situation naturally
-                        4. Be empathetic and informative
-                        5. Keep answer to 1-2 sentences
-                        6. Do NOT mention SQL, queries, or technical details
+                    RULES:
+                    - Do NOT say 'No data found'
+                    - Provide a natural explanation
+                    - Keep answer to 1-2 sentences
+                    - Do NOT mention SQL
                     """
                 ),
-                ("human", f"User Question: {question}\nDatabase returned no results. Generate explanation:"),
+                (
+                    "human",
+                    f"""
+                    Context:
+                    {context}
+
+                    User Question:
+                    {question}
+
+                    Database returned no results.
+                    Generate explanation:
+                    """
+                ),
             ]
         )
+
         messages = prompt.format_messages()
-        # Use FLASH for natural text generation
-        return llm_flash.invoke(messages).content.strip()
+        resp = llm_flash.invoke(messages)
+        content = resp.content
+        # Safely extract text even if content is list
+        if isinstance(content, list):
+            first = content[0]
+            if isinstance(first, dict):
+                return first.get("text", "").strip()
+            else:
+                return str(first).strip()
+        else:
+            return str(content).strip()
 
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                """You are answering a user's question based on SQL query results.
+                """You answer questions using database results and context.
 
-                    CRITICAL RULES:
-                    1. Give ONLY the answer to the user's question - be DIRECT and CONCISE
-                    2. Answer in ONE sentence maximum
-                    3. Do NOT mention SQL or technical details
-                    4. For COUNT or numeric results: ALWAYS include the number
-                    5. If result contains NULL, explain what's missing
-                    WORD LIMIT: Keep your answer under 30 words.
+                RULES:
+                - One sentence only
+                - Include numbers if present
+                - Do NOT mention SQL
+                - Keep under 30 words
                 """
             ),
-            ("human", f"Question: {question}\nResult: {response}\nAnswer:"),
+            (
+                "human",
+                f"""
+                Context:
+                {context}
+
+                Question:
+                {question}
+
+                SQL Result:
+                {response}
+
+                Answer:
+                """
+            ),
         ]
     )
-    
+
     messages = prompt.format_messages()
-    # Use FLASH for natural text generation
-    answer = llm_flash.invoke(messages).content.strip()
-    
+    resp = llm_flash.invoke(messages)
+    content = resp.content
+    # Safely extract text even if content is list
+    if isinstance(content, list):
+        first = content[0]
+        if isinstance(first, dict):
+            answer = first.get("text", "").strip()
+        else:
+            answer = str(first).strip()
+    else:
+        answer = str(content).strip()
+
     if len(answer) > 300:
         answer = answer[:300].rsplit('.', 1)[0] + "."
-    
+
     return answer
 
 # Language detection and translation
@@ -496,7 +595,11 @@ def select_data(state: State):
         sql = generate_valid_sql(state["question"], llm_pro)
         df = run_query_df(sql)
         answer = answer_user_query(state["question"])
-        return {"viz_data": df, "answer": answer}
+        
+        # Convert DataFrame to JSON for safe serialization
+        df_json = df.to_dict(orient="records")
+        
+        return {"viz_data": df_json, "answer": answer}
     
     return {"answer": answer_user_query(state["question"])}
 
@@ -521,7 +624,12 @@ def detect_chart_type(question: str) -> str:
     else: return "bar"
 
 def visualize_node(state: State):
-    df = state.get("viz_data")
+    df_json = state.get("viz_data")
+    if not df_json:
+        return {"graph_base64": None}
+
+    # Convert back to DataFrame for plotting
+    df = pd.DataFrame(df_json)
 
     if not isinstance(df, pd.DataFrame) or df.empty:
         logger.warning("No dataframe available for visualization")
@@ -633,4 +741,4 @@ def build_graph():
     )
     graph.add_edge("visualize", "answer")
 
-    return graph.compile()
+    return graph.compile(checkpointer=memory)
