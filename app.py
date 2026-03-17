@@ -3,6 +3,8 @@ from flask_session import Session
 import uuid
 import redis
 import logging
+import json
+import re
 from graph import build_graph
 from llm import gemini_flash_fast  # Import the fast model for the translation route
 from utils import translate_text
@@ -13,10 +15,20 @@ from logging_config import setup_logging
 from llm_cache import get_cached_answer, store_cached_answer
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# 1. Load the chitchat dictionary when the app starts
+try:
+    with open('chitchat.json', 'r') as f:
+        CHITCHAT_RESPONSES = json.load(f)
+    logger.info("Loaded chitchat rules.")
+except FileNotFoundError:
+    CHITCHAT_RESPONSES = {}
+    logger.warning("chitchat.json not found. Skipping chitchat interception.")
 
 app = Flask(__name__)
 
@@ -67,6 +79,7 @@ def chat():
     Main chatbot endpoint.
     Handles concurrent users through Redis sessions.
     """
+    
 
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
@@ -74,6 +87,22 @@ def chat():
 
     payload = request.get_json()
     question = payload.get("message", "")
+
+    # ==========================================
+    # 2. CHITCHAT INTERCEPTION LOGIC ADDED HERE
+    # ==========================================
+    # Normalize the question (lowercase and remove punctuation)
+    clean_question = re.sub(r'[^\w\s]', '', question).strip().lower()
+
+    if clean_question in CHITCHAT_RESPONSES:
+        logger.info("CHITCHAT INTERCEPT HIT")
+        response = {
+            "answer": CHITCHAT_RESPONSES[clean_question],
+            "graphBase64": None # No graph execution happened
+        }
+        return jsonify(response)
+    # ==========================================
+    
 
     logger.info(f"[USER QUESTION] {question}")
     
