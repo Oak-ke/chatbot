@@ -51,8 +51,21 @@ class State(TypedDict):
 
 # Intent mapping
 INTENT_MAP = {
-    "system_name": ["system name", "name of system"],
-    "system_info": ["about co-op magic", "system details"],
+    "system_name": [
+        "system name",
+        "name of system",
+        "what is this system"
+    ],
+    "system_info": [
+        "about co-op magic",
+        "system details",
+        "about this system",
+        "tell me about this system",
+        "tell me more about this system",
+        "what does this system do",
+        "explain this system",
+        "system info"
+    ],
     "cooperatives_total": ["number of cooperatives", "total cooperatives"],
     "members_total": ["total members", "number of members", "members"],
     "members_by_state": ["members per state", "members by state"],
@@ -560,34 +573,55 @@ def detect_lan_and_translate(state: State, llm):
 
 # Intent detection
 def detect_intent(state: State, llm):
+    """
+    Detect intent using rule-based first, fallback to LLM.
+    Returns canonical intent or 'unknown'.
+    """
+    question = state["question"].lower()
+
+    # 1. Rule-based first
+    for canonical, aliases in INTENT_MAP.items():
+        if any(alias.lower() in question for alias in aliases):
+            return {"intent": canonical}
+
+    # 2. Fallback to LLM
     prompt = f"Classify the intent into one of: {list(INTENT_MAP.keys())}\nQuestion: {state['question']}"
-    
-    # Get the raw response object
     response = llm.invoke([HumanMessage(content=prompt)])
-    
-    # FIX: Safely extract the content whether it's a string or a list of blocks
+
+    # 3. Safely extract LLM output
     content = response.content
     if isinstance(content, list):
-        # Extract text from the first content block
         first_part = content[0]
         if isinstance(first_part, dict):
-            raw_intent = first_part.get('text', '')
+            raw_intent = first_part.get("text", "")
         else:
-            raw_intent = getattr(first_part, 'text', str(first_part))
+            raw_intent = getattr(first_part, "text", str(first_part))
     else:
-        # It's a normal string
         raw_intent = str(content)
 
     raw_intent = raw_intent.strip().lower()
 
+    # 4. Map LLM output to canonical intent
     for canonical, aliases in INTENT_MAP.items():
         if any(alias.lower() in raw_intent for alias in aliases):
             return {"intent": canonical}
+
+    # 5. Fallback if no match
     return {"intent": "unknown"}
 
 # Data selection
 def select_data(state: State):
-    if state["intent"] in {"system_info", "system_name"}:
+    question = state["question"].lower()
+
+    if "name of this system" in question or "what is the name of this system" in question:
+        return {"answer": "The system is called Co-op Magic."}
+
+    intent = state["intent"]
+
+    if intent == "system_name":
+        return {"answer": "The system is called Co-op Magic."}
+
+    if intent == "system_info":
         return {"answer": "Co-op Magic is a comprehensive system designed to manage cooperatives' data across South Sudan securely and efficiently."}
 
     if state["intent"] == "visualize":
