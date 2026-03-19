@@ -88,9 +88,7 @@ def chat():
     payload = request.get_json()
     question = payload.get("message", "")
 
-    # ==========================================
-    # 2. CHITCHAT INTERCEPTION LOGIC ADDED HERE
-    # ==========================================
+    # 2. CHITCHAT INTERCEPTION LOGIC
     # Normalize the question (lowercase and remove punctuation)
     clean_question = re.sub(r'[^\w\s]', '', question).strip().lower()
 
@@ -101,9 +99,7 @@ def chat():
             "graphBase64": None # No graph execution happened
         }
         return jsonify(response)
-    # ==========================================
     
-
     logger.info(f"[USER QUESTION] {question}")
     
     # Check Redis LLM cache first
