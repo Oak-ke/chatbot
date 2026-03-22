@@ -26,7 +26,7 @@ def gemini_flash_fast():
     return ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         temperature=0, # Slight creativity for natural chat
-        max_output_tokens=256,
+        max_output_tokens=1024,
         google_api_key=os.getenv("GOOGLE_API_KEY")
     )
 
