@@ -1,14 +1,20 @@
 import redis
 import logging
 from cachetools import TTLCache
+import os
+from logging_config import setup_logging
 
 # Logger for cache events
-logger = logging.getLogger("cache")
+setup_logging()
+logger = logging.getLogger(__name__)
+
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
 # Redis connection
 redis_client = redis.Redis(
-    host="127.0.0.1", # force IPv4
-    port=6379,
+    host=REDIS_HOST, # force IPv4
+    port=REDIS_PORT,
     decode_responses=True,
     socket_connect_timeout=2, # Prevents redis from stalling
     socket_timeout=2
