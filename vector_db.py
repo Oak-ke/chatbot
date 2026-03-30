@@ -324,12 +324,22 @@ def update_vector_index():
 
 # Public getter
 def get_vector_db():
-
     global _vector_db_instance
 
     if _vector_db_instance is None:
-        logger.info("Loading FAISS vector database...")
-        _vector_db_instance = build_vector_db()
-        logger.info("Vector DB loaded successfully.")
+        logger.info("Loading FAISS index from disk...")
+
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="gemini-embedding-001",
+            google_api_key=GOOGLE_API_KEY
+        )
+
+        _vector_db_instance = FAISS.load_local(
+            VECTOR_INDEX_PATH,
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+
+        logger.info("FAISS loaded.")
 
     return _vector_db_instance
