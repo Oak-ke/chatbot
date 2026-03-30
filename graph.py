@@ -72,7 +72,7 @@ INTENT_MAP = {
     "female_members": ["female members"],
     "male_members": ["male members"],
     "directors_total": ["directors", "total directors"],
-    "visualize": ["visualize", "graph", "chart", "show trend"]
+    "visualize": ["visualize", "graph", "chart", "show trend", "pie chart", "bar chart", "line"]
 }
 
 # Database setup
@@ -578,6 +578,11 @@ def detect_intent(state: State, llm):
     Returns canonical intent or 'unknown'.
     """
     question = state["question"].lower()
+    
+    # Check for visualization keywords first
+    viz_aliases = INTENT_MAP.get("visualize", [])
+    if any(alias.lower() in question for alias in viz_aliases):
+        return {"intent": "visualize"}
 
     # 1. Rule-based first
     for canonical, aliases in INTENT_MAP.items():
