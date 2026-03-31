@@ -106,12 +106,9 @@ def chat():
     cached = get_cached_answer(question)
 
     if cached:
-        logger.info("LLM CACHE HIT")
+        logger.info(f"LLM CACHE HIT: {question}")
         return jsonify(cached)
 
-    logger.info("LLM CACHE MISS")
-    
-    logger.info(f"LLM CACHE HIT: {question}")
     logger.info(f"LLM CACHE MISS: {question}")
     
     # Pass thread_id via config, not in the input state
