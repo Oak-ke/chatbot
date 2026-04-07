@@ -5,6 +5,8 @@ import redis
 import logging
 import json
 import re
+import time
+from google.genai.errors import ServerError
 from graph import build_graph
 from llm import gemini_flash_fast  # Import the fast model for the translation route
 from utils import translate_text
@@ -79,8 +81,6 @@ def chat():
     Main chatbot endpoint.
     Handles concurrent users through Redis sessions.
     """
-    
-
     if "session_id" not in session:
         session["session_id"] = str(uuid.uuid4())
         logger.info(f"[NEW SESSION] {session['session_id']}")
@@ -114,22 +114,49 @@ def chat():
     # Pass thread_id via config, not in the input state
     config = {"configurable": {"thread_id": session["session_id"]}}
 
-    result = graph.invoke(
-        {"question": question},
-        config=config
-    )
+    # Safe graph execution
+    try:
+        for attempt in range(3):
+            try:
+                result = graph.invoke(
+                    {"question": question},
+                    config=config
+                )
+                break
+            except ServerError as e:
+                logger.warning(f"[503 ERROR] attempt {attempt+1}")
+                if attempt == 2:
+                    raise
+                time.sleep(2 ** attempt)
 
-    logger.info("[GRAPH EXECUTION COMPLETE]")
+        logger.info("[GRAPH EXECUTION COMPLETE]")
 
-    response = {
-        "answer": result.get("answer"),
-        "graphBase64": result.get("graph_base64")
-    }
+        response = {
+            "answer": result.get("answer"),
+            "graphBase64": result.get("graph_base64")
+        }
 
-    # store result
-    store_cached_answer(question, response)
+        # store only valid responses
+        if response.get("answer"):
+            store_cached_answer(question, response)
 
-    return jsonify(response)
+        return jsonify(response)
+    
+    except ServerError:
+        logger.error("[FINAL 503 FAILURE]")
+
+        return jsonify({
+            "answer": "The AI service is currently experiencing high demand. Please try again shortly.",
+            "graphBase64": None
+        }), 200
+
+    except Exception as e:
+        logger.exception("[UNEXPECTED ERROR]")
+
+        return jsonify({
+            "answer": "Something went wrong on the server. Please try again later.",
+            "graphBase64": None
+        }), 200
 
 # health check
 @app.route("/health")
