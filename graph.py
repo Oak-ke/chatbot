@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 from vector_db import get_vector_db
 from cache import vector_cache, sql_cache
 from logging_config import setup_logging
+from collections import defaultdict
 
 # Configure logging
 # logger = logging.getLogger(__name__)
@@ -655,12 +656,26 @@ def run_query_df(query: str) -> pd.DataFrame:
     return pd.read_sql(sql, db._engine)
 
 def detect_chart_type(question: str) -> str:
-    question_lower = question.lower()
-    if "pie" in question_lower or "pie chart" in question_lower: return "pie"
-    elif "line" in question_lower or "trend" in question_lower or "over time" in question_lower: return "line"
-    elif "histogram" in question_lower or "distribution" in question_lower: return "histogram"
-    elif "bar" in question_lower or "bar chart" in question_lower: return "bar"
-    else: return "bar"
+    q = question.lower()
+
+    chart_keywords = {
+        "pie": ["pie", "chart" "proportion", "percentage", "share"],
+        "line": ["line", "trend", "over time", "time series", "change"],
+        "histogram": ["histogram", "distribution", "frequency", "spread", "bins"],
+        "bar": ["bar", "compare", "comparison", "categories", "graph"],
+    }
+
+    scores = defaultdict(int)
+
+    for chart, keywords in chart_keywords.items():
+        for k in keywords:
+            if re.search(rf"\b{re.escape(k)}\b", q):
+                scores[chart] += 1
+
+    if not scores:
+        return "unknown"
+
+    return max(scores, key=scores.get)
 
 def visualize_node(state: State):
     df_json = state.get("viz_data")
