@@ -226,6 +226,10 @@ def write_sql_query(llm):
     sql_template = """
         You are a MySQL SQL generator for a cooperative database.
 
+        IMPORTANT:
+        - "system", "platform", or "database" refers to ALL data in the tables
+        - Treat them as querying the relevant table directly
+    
         CRITICAL: ONLY 6 TABLES EXIST IN THIS DATABASE
         The ONLY tables available are:
         1. cooperative
@@ -276,6 +280,18 @@ def write_sql_query(llm):
         - User types: 'Western Bahr el Ghazal' (with spaces)
         - Database has: 'Western_Bahr_el_Ghazal' (with underscores)
         
+        CRITICAL FOR GENDER:
+        - member_gender values may be: 'f', 'female', 'm', 'male'
+        - ALWAYS normalize using:
+
+            CASE 
+                WHEN LOWER(member_gender) IN ('f','female') THEN 'Female'
+                WHEN LOWER(member_gender) IN ('m','male') THEN 'Male'
+                ELSE 'Other'
+            END
+
+        - When counting male/female → ALWAYS use GROUP BY normalized gender
+    
         Use REPLACE to convert spaces to underscores in comparison:
         - CORRECT: WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
         OR normalize the column:
@@ -307,6 +323,14 @@ def write_sql_query(llm):
                 "system",
                 """You are an expert SQL generator for a MySQL cooperative database.
 
+                    IMPORTANT:
+                    - "system", "platform", or "database" refers to ALL data in the tables
+                    - Treat them as querying the relevant table directly
+                    
+                    CRITICAL FOR GENDER:
+                    - Normalize member_gender values ('f','female','m','male')
+                    - ALWAYS use CASE normalization before COUNT or GROUP BY
+    
                     If you use ANY table other than the 6 listed, your output is INVALID.
                     CRITICAL: This database has ONLY 6 TABLES:
                     1. cooperative
