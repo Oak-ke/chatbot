@@ -6,7 +6,7 @@ from langgraph.graph import StateGraph
 from typing import TypedDict, Optional
 from langchain_core.messages import HumanMessage
 from utils import detect_language, translate_text
-from llm import gemini_pro_sql, gemini_flash_fast  # Updated import
+from llm import gemini_pro_sql, gemini_flash_fast
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
@@ -29,12 +29,6 @@ from prompts.prompt import (
     INTENT_FALLBACK_PROMPT
 )
 
-# Configure logging
-# logger = logging.getLogger(__name__)
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format="%(asctime)s | %(levelname)s | %(message)s"
-# )
 setup_logging()
 logger = logging.getLogger(__name__)
 
@@ -53,8 +47,9 @@ class State(TypedDict):
     intent: str
     data: str | None
     answer: str
-    viz_data: Optional[pd.DataFrame]
+    viz_data: Optional[list] # UPDATED: Changed from DataFrame to list for JSON serialization
     graph_base64: Optional[str]
+    graph_svg: Optional[str] # NEW: Added for SVG downloads
 
 # Intent mapping
 INTENT_MAP = {
@@ -173,26 +168,15 @@ def log_index_usage(sql: str):
         logger.warning(f"Failed to log index usage: {e}")
         
 def semantic_search(question: str, k: int = 5):
-    """
-    Retrieve semantic documents from FAISS.
-    Uses in-memory TTL cache to prevent repeated searches.
-    """
-
-    # Check cache first
     if question in vector_cache:
         logger.info(f"[VECTOR CACHE HIT] {question}")
         return vector_cache[question]
 
     try:
         docs = vector_db.similarity_search(question, k=k)
-
         results = [doc.page_content for doc in docs]
-
-        # Save to cache
         vector_cache[question] = results
-
         logger.info(f"[VECTOR SEARCH] Query executed | Docs retrieved: {len(results)}")
-
         return results
 
     except Exception as e:
@@ -200,13 +184,7 @@ def semantic_search(question: str, k: int = 5):
         return []
     
 def run_query(query: str):
-    """
-    Executes SQL queries with caching and validation.
-    """
-
     sql = sanitize_sql(query)
-
-    # Cache lookup
     if sql in sql_cache:
         logger.info("[SQL CACHE HIT]")
         return sql_cache[sql]
@@ -215,14 +193,9 @@ def run_query(query: str):
 
     try:
         result = db.run(sql)
-
-        # Save result to cache
         sql_cache[sql] = result
-
         logger.info("[SQL SUCCESS]")
-
         return result
-
     except Exception as e:
         logger.error(f"[SQL ERROR] {e}")
         raise
@@ -285,17 +258,13 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
 # Natural answer generation
 def answer_user_query(question: str) -> str:
     try:
-        # Retrieve semantic context from vector database
         context_docs = semantic_search(question)
-
         context = ""
         if context_docs:
             context = "\n".join(context_docs[:3])
 
-        # Generate SQL query
         sql = generate_valid_sql(question, llm_pro)
         logger.info(f"[FINAL SQL USED] {sql}")
-
         response = run_query(sql)
 
     except Exception as e:
@@ -316,7 +285,6 @@ def answer_user_query(question: str) -> str:
         messages = prompt.format_messages()
         resp = llm_flash.invoke(messages)
         content = resp.content
-        # Safely extract text even if content is list
         if isinstance(content, list):
             first = content[0]
             if isinstance(first, dict):
@@ -340,7 +308,6 @@ def answer_user_query(question: str) -> str:
     messages = prompt.format_messages()
     resp = llm_flash.invoke(messages)
     content = resp.content
-    # Safely extract text even if content is list
     if isinstance(content, list):
         first = content[0]
         if isinstance(first, dict):
@@ -368,32 +335,22 @@ def detect_lan_and_translate(state: State, llm):
 
 # Intent detection
 def detect_intent(state: State, llm):
-    """
-    Detect intent using rule-based first, fallback to LLM.
-    Returns canonical intent or 'unknown'.
-    """
     question = state["question"].lower()
     
-    # Check for visualization keywords first
     viz_aliases = INTENT_MAP.get("visualize", [])
     if any(alias.lower() in question for alias in viz_aliases):
         return {"intent": "visualize"}
 
-    # 1. Rule-based first
     for canonical, aliases in INTENT_MAP.items():
         if any(alias.lower() in question for alias in aliases):
             return {"intent": canonical}
 
-    # 2. Fallback to LLM
-    # prompt = f"Classify the intent into one of: {list(INTENT_MAP.keys())}\nQuestion: {state['question']}"
-    # response = llm.invoke([HumanMessage(content=prompt)])
     prompt_text = INTENT_FALLBACK_PROMPT.format(
         intents=list(INTENT_MAP.keys()), 
         question=state['question']
     )
     response = llm.invoke([HumanMessage(content=prompt_text)])
 
-    # 3. Safely extract LLM output
     content = response.content
     if isinstance(content, list):
         first_part = content[0]
@@ -406,12 +363,10 @@ def detect_intent(state: State, llm):
 
     raw_intent = raw_intent.strip().lower()
 
-    # 4. Map LLM output to canonical intent
     for canonical, aliases in INTENT_MAP.items():
         if any(alias.lower() in raw_intent for alias in aliases):
             return {"intent": canonical}
 
-    # 5. Fallback if no match
     return {"intent": "unknown"}
 
 # Data selection
@@ -430,7 +385,6 @@ def select_data(state: State):
         return {"answer": "Co-op Magic is a comprehensive system designed to manage cooperatives' data across South Sudan securely and efficiently."}
 
     if state["intent"] == "visualize":
-        # Use PRO to generate the SQL for visualization
         sql = generate_valid_sql(state["question"], llm_pro)
         df = run_query_df(sql)
         answer = answer_user_query(state["question"])
@@ -442,10 +396,15 @@ def select_data(state: State):
     
     return {"answer": answer_user_query(state["question"])}
 
+# UPDATED: generate_answer now routes viz_data and graph_svg to the output
 def generate_answer(state: State):
     result = {"answer": state.get("answer") or "No data found."}
     if "graph_base64" in state and state["graph_base64"]:
         result["graph_base64"] = state["graph_base64"]
+    if "graph_svg" in state and state["graph_svg"]:
+        result["graph_svg"] = state["graph_svg"]
+    if "viz_data" in state and state["viz_data"]:
+        result["viz_data"] = state["viz_data"]
     return result
 
 def run_query_df(query: str) -> pd.DataFrame:
@@ -458,7 +417,7 @@ def detect_chart_type(question: str) -> str:
     q = question.lower()
 
     chart_keywords = {
-        "pie": ["pie", "chart" "proportion", "percentage", "share"],
+        "pie": ["pie", "chart", "proportion", "percentage", "share"], # FIXED: Added missing comma
         "line": ["line", "trend", "over time", "time series", "change"],
         "histogram": ["histogram", "distribution", "frequency", "spread", "bins"],
         "bar": ["bar", "compare", "comparison", "categories", "graph"],
@@ -476,17 +435,19 @@ def detect_chart_type(question: str) -> str:
 
     return max(scores, key=scores.get)
 
+# UPDATED: Completely rewritten for Thread Safety, IndexError prevention, and SVG output
 def visualize_node(state: State):
     df_json = state.get("viz_data")
     if not df_json:
-        return {"graph_base64": None}
+        return {"graph_base64": None, "graph_svg": None}
 
     # Convert back to DataFrame for plotting
     df = pd.DataFrame(df_json)
 
-    if not isinstance(df, pd.DataFrame) or df.empty:
-        logger.warning("No dataframe available for visualization")
-        return {"graph_base64": None}
+    # FIXED: Check if DataFrame has at least 2 columns to prevent IndexError
+    if not isinstance(df, pd.DataFrame) or df.empty or len(df.columns) < 2:
+        logger.warning("Dataframe is empty or lacks sufficient columns for visualization")
+        return {"graph_base64": None, "graph_svg": None}
 
     if len(df.columns) >= 1:
         gender_col = df.columns[0]
@@ -499,63 +460,65 @@ def visualize_node(state: State):
                 else: return val.capitalize()
             
             df[gender_col] = df[gender_col].apply(normalize_gender)
-            
-            if len(df.columns) >= 2:
-                count_col = df.columns[1]
-                df = df.groupby(gender_col)[count_col].sum().reset_index()
+            df = df.groupby(gender_col)[df.columns[1]].sum().reset_index()
 
     chart_type = detect_chart_type(state.get("question", ""))
-    plt.figure(figsize=(10, 6))
+    
+    # FIXED: Use Object-Oriented API to ensure Thread Safety
+    fig, ax = plt.subplots(figsize=(10, 6))
     
     if chart_type == "pie":
         colors = ['#FF6B6B', '#4ECDC4', "#BCD145", '#FFA07A', '#98D8C8', '#F7DC6F']
-        _, texts, autotexts = plt.pie(
+        _, texts, autotexts = ax.pie(
             df[df.columns[1]], labels=df[df.columns[0]], autopct='%1.1f%%',
             colors=colors, startangle=90, textprops={'fontsize': 13, 'weight': 'bold'}
         )
-        plt.title(f'{df.columns[1]} Distribution', fontsize=16, fontweight='bold', pad=20)
-        for autotext in autotexts:
-            autotext.set_color('white')
-            autotext.set_fontweight('bold')
-            autotext.set_fontsize(13)
-        for text in texts:
-            text.set_fontweight('bold')
-            text.set_fontsize(13)
+        ax.set_title(f'{df.columns[1]} Distribution', fontsize=16, fontweight='bold', pad=20)
+        for autotext in autotexts: autotext.set_color('white')
             
     elif chart_type == "line":
-        plt.plot(df[df.columns[0]], df[df.columns[1]], marker='o', linewidth=2, markersize=8, color='steelblue')
-        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
-        plt.ylabel(df.columns[1], fontsize=13, fontweight='bold')
-        plt.title('Data Trend', fontsize=13, fontweight='bold')
-        plt.xticks(rotation=45, ha='right')
-        plt.grid(True, alpha=0.3)
+        ax.plot(df[df.columns[0]], df[df.columns[1]], marker='o', linewidth=2, markersize=8, color='steelblue')
+        ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        ax.set_ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        ax.set_title('Data Trend', fontsize=13, fontweight='bold')
+        ax.tick_params(axis='x', rotation=45, labelsize=12)
+        ax.grid(True, alpha=0.3)
         
     elif chart_type == "histogram":
-        plt.hist(df[df.columns[0]], bins=10, color='steelblue', edgecolor='black', alpha=0.7)
-        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
-        plt.ylabel('Frequency', fontsize=13, fontweight='bold')
-        plt.title('Distribution Histogram', fontsize=16, fontweight='bold', pad=20)
-        plt.xticks(rotation=45, ha='right', fontsize=12)
-        plt.yticks(fontsize=12)
+        ax.hist(df[df.columns[0]], bins=10, color='steelblue', edgecolor='black', alpha=0.7)
+        ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        ax.set_ylabel('Frequency', fontsize=13, fontweight='bold')
+        ax.set_title('Distribution Histogram', fontsize=16, fontweight='bold', pad=20)
+        ax.tick_params(axis='x', rotation=45, labelsize=12)
         
     else:
-        ax = df.plot(kind='bar', x=df.columns[0], y=df.columns[1], legend=False, color='steelblue')
-        plt.xlabel(df.columns[0], fontsize=13, fontweight='bold')
-        plt.ylabel(df.columns[1], fontsize=13, fontweight='bold')
-        plt.title('Data Distribution', fontsize=13, fontweight='bold')
-        plt.xticks(rotation=45, ha='right')
+        df.plot(kind='bar', x=df.columns[0], y=df.columns[1], legend=False, color='steelblue', ax=ax)
+        ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        ax.set_ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        ax.set_title('Data Distribution', fontsize=13, fontweight='bold')
+        ax.tick_params(axis='x', rotation=45)
+        # Fix label iteration to avoid math errors if max is 0
+        y_max = max(df[df.columns[1]]) if not df[df.columns[1]].empty else 1
         for i, v in enumerate(df[df.columns[1]]):
-            ax.text(i, v + 5, str(v), ha='center', va='bottom', fontweight='bold')
+            ax.text(i, v + (y_max * 0.02), str(v), ha='center', va='bottom', fontweight='bold')
     
-    plt.tight_layout()
+    fig.tight_layout()
 
-    buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=100)
-    plt.close()
-    buf.seek(0)
-    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    # EXTENSION: Generate PNG (High Res)
+    buf_png = BytesIO()
+    fig.savefig(buf_png, format='png', dpi=300) 
+    buf_png.seek(0)
+    img_base64 = base64.b64encode(buf_png.read()).decode('utf-8')
 
-    return {"graph_base64": img_base64}
+    # EXTENSION: Generate SVG
+    buf_svg = BytesIO()
+    fig.savefig(buf_svg, format='svg', bbox_inches='tight')
+    buf_svg.seek(0)
+    svg_string = buf_svg.read().decode('utf-8')
+
+    plt.close(fig) # Safely close specific figure to prevent memory leak
+
+    return {"graph_base64": img_base64, "graph_svg": svg_string}
 
 def route_to_answer(state: State):
     if state["intent"] == "visualize" or state["intent"] == "viz_data":
@@ -563,21 +526,14 @@ def route_to_answer(state: State):
     return "answer"
 
 def build_graph():
-    """
-    Build a StateGraph pipeline for processing user queries.
-    Note: LLMs are now initialized globally and passed directly to the nodes.
-    """
     graph = StateGraph(State)
 
-    # Fast model for routing/translation
     graph.add_node("translate", lambda s: detect_lan_and_translate(s, llm_flash))
     graph.add_node("intent", lambda s: detect_intent(s, llm_flash))
     
-    # Complex data selection handled inside (uses Pro model)
     graph.add_node("data", select_data)
     graph.add_node("visualize", visualize_node)
     
-    # Final answer node
     graph.add_node("answer", generate_answer)
 
     graph.set_entry_point("translate")

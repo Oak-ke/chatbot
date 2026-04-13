@@ -133,7 +133,9 @@ def chat():
 
         response = {
             "answer": result.get("answer"),
-            "graphBase64": result.get("graph_base64")
+            "graphBase64": result.get("graph_base64"),
+            "graphSvg": result.get("graph_svg"),
+            "vizData": result.get("viz_data")
         }
 
         # store only valid responses
