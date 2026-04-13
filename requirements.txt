@@ -16,3 +16,4 @@ redis
 cachetools
 Flask-Session==0.6.0
 langgraph-checkpoint
+gunicorn

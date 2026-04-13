@@ -21,6 +21,13 @@ import matplotlib.pyplot as plt
 from vector_db import get_vector_db
 from cache import vector_cache, sql_cache
 from logging_config import setup_logging
+from collections import defaultdict
+from prompts.prompt import (
+    SQL_SYSTEM_PROMPT, SQL_HUMAN_TEMPLATE, SQL_RETRY_PROMPT,
+    NO_RESULTS_SYSTEM_PROMPT, NO_RESULTS_HUMAN_TEMPLATE,
+    NATURAL_ANSWER_SYSTEM_PROMPT, NATURAL_ANSWER_HUMAN_TEMPLATE,
+    INTENT_FALLBACK_PROMPT
+)
 
 # Configure logging
 # logger = logging.getLogger(__name__)
@@ -51,15 +58,28 @@ class State(TypedDict):
 
 # Intent mapping
 INTENT_MAP = {
-    "system_name": ["system name", "name of system"],
-    "system_info": ["about co-op magic", "system details"],
+    "system_name": [
+        "system name",
+        "name of system",
+        "what is this system"
+    ],
+    "system_info": [
+        "about co-op magic",
+        "system details",
+        "about this system",
+        "tell me about this system",
+        "tell me more about this system",
+        "what does this system do",
+        "explain this system",
+        "system info"
+    ],
     "cooperatives_total": ["number of cooperatives", "total cooperatives"],
     "members_total": ["total members", "number of members", "members"],
     "members_by_state": ["members per state", "members by state"],
     "female_members": ["female members"],
     "male_members": ["male members"],
     "directors_total": ["directors", "total directors"],
-    "visualize": ["visualize", "graph", "chart", "show trend"]
+    "visualize": ["visualize", "graph", "chart", "show trend", "pie chart", "bar chart", "line"]
 }
 
 # Database setup
@@ -209,129 +229,10 @@ def run_query(query: str):
 
 # SQL generation
 def write_sql_query(llm):
-    sql_template = """
-        You are a MySQL SQL generator for a cooperative database.
-
-        CRITICAL: ONLY 6 TABLES EXIST IN THIS DATABASE
-        The ONLY tables available are:
-        1. cooperative
-        2. member
-        3. director
-        4. cooperative_stages
-        5. cooperative_location
-        6. deregistration
-        
-        Do NOT use any other tables (reserve, admin, citizen, invoices, note, password_reset, receipts. DO NOT EXIST).
-
-        COMPLETE COLUMN REFERENCE (use EXACTLY ALLOWED_COLUMNS):
-        
-        cooperative table:
-        - cooperative_id, cooperative_name, cooperative_type, cooperative_state
-        - cooperative_constitution, cooperative_bylaws, has_directors, has_members
-        - cooperative_county, cooperative_payam, cooperative_boma, approval_status
-        - cooperative_certificate, enumerator_id, cooperative_date_created
-        
-        member table:
-        - member_id, cooperative_id, member_name, member_gender
-        - member_state, member_county, member_payam, member_boma
-        
-        director table:
-        - director_id, cooperative_id, director_name, director_gender
-        - director_state, director_county, director_payam, director_boma
-        
-        CRITICAL RULES:
-        1. Use table.column format (e.g., member.member_gender, NOT member.gender)
-        2. Do NOT invent column names or table names
-        3. ALWAYS PREFER JOINs over subqueries
-        4. When filtering by cooperative_name, ALWAYS use INNER JOIN: 
-            SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
-        5. If you must use a subquery with multiple matches, use IN not =:
-            WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
-        6. For aggregation queries (state, count, max, etc.), query the appropriate table directly
-        7. Remember: state information exists in THREE tables as different columns:
-            - cooperative.cooperative_state (for cooperatives)
-            - member.member_state (for members)
-            - director.director_state (for directors)
-        8. For location/state matching, use LOWER() for case-insensitive comparison
-        9. Always include COUNT in aggregation SELECT - never just group without counting
-        10. Return ONLY ONE SELECT statement, no markdown, no explanation
-        
-        CRITICAL FOR LOCATION QUERIES:
-        When the question asks about a state, county, payam, boma or any location name:
-        IMPORTANT: State names in the database use UNDERSCORES, not spaces!
-        - User types: 'Western Bahr el Ghazal' (with spaces)
-        - Database has: 'Western_Bahr_el_Ghazal' (with underscores)
-        
-        Use REPLACE to convert spaces to underscores in comparison:
-        - CORRECT: WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
-        OR normalize the column:
-        - CORRECT: WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
-        
-        WRONG approaches:
-        - WHERE cooperative_state = 'Western Bahr el Ghazal' (case AND format mismatch)
-        - WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (missing underscore conversion)
-        
-        EXAMPLES:
-        - "female members" → SELECT COUNT(*) FROM member WHERE member_gender = 'Female'
-        - "members in Yambio Farmers Cooperative" → SELECT COUNT(*) FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = 'Yambio Farmers Cooperative'
-        - "which state has the most cooperatives" → SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-        - "how many cooperatives in Western Bahr el Ghazal" → SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
-        - "directors in each cooperative" → SELECT c.cooperative_name, COUNT(d.director_id) AS count FROM cooperative c LEFT JOIN director d ON c.cooperative_id = d.cooperative_id GROUP BY c.cooperative_id
-        
-        Database Schema:
-        {schema}
-
-        User Question:
-        {question}
-
-        Output SQL (no markdown, no explanation):
-    """
-
     prompt = ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                """You are an expert SQL generator for a MySQL cooperative database.
-
-                    If you use ANY table other than the 6 listed, your output is INVALID.
-                    CRITICAL: This database has ONLY 6 TABLES:
-                    1. cooperative
-                    2. member  
-                    3. director
-                    4. cooperative_stages
-                    5. cooperative_location
-                    6. deregistration
-
-                    DO NOT USE any other tables: reserve, citizen, admin, invoices, note, password_reset, receipts.
-                                                                                                        
-                    COMPLETE VALID COLUMNS:
-                    cooperative: cooperative_id, cooperative_name, cooperative_type, cooperative_state, cooperative_constitution, cooperative_bylaws, has_directors, has_members, cooperative_county, cooperative_payam, cooperative_boma, approval_status, cooperative_certificate, enumerator_id, cooperative_date_created
-
-                    member: member_id, cooperative_id, member_name, member_gender, member_state, member_county, member_payam, member_boma
-
-                    director: director_id, cooperative_id, director_name, director_gender, director_state, director_county, director_payam, director_boma
-
-                    CRITICAL SQL RULES:
-                    1. ALWAYS PREFER JOINs over subqueries
-                    2. When filtering by cooperative_name, ALWAYS use INNER JOIN:
-                    SELECT ... FROM member m INNER JOIN cooperative c ON m.cooperative_id = c.cooperative_id WHERE c.cooperative_name = '...'
-                    3. If you MUST use a subquery, use IN not = when there might be multiple matches:
-                    WHERE cooperative_id IN (SELECT cooperative_id FROM cooperative WHERE ...)
-                    4. For state-related queries:
-                    - "state" about cooperatives = cooperative.cooperative_state
-                    - "state" about members = member.member_state
-                    - "state" about directors = director.director_state
-                    5. For state/location matching, ALWAYS use case-insensitive comparison:
-                    - Use LOWER: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal')
-                    6. For aggregation queries (count by state, max/min by group):
-                    - Query the primary table directly, then GROUP BY
-                    - Always include COUNT(*) in the SELECT when aggregating
-                    - Use proper table aliases to avoid ambiguous column errors
-                    7. Always use the full column name with table prefix (member.member_gender, NOT member.gender)
-                    8. Generate ONLY valid SQL, no explanations or markdown.
-                """
-            ),
-            ("human", sql_template),
+            ("system", SQL_SYSTEM_PROMPT),
+            ("human", SQL_HUMAN_TEMPLATE),
         ]
     )
 
@@ -362,61 +263,10 @@ def generate_valid_sql(question: str, llm, max_retries: int = 3) -> str:
             {
                 "question": question
                 if not error_message
-                else f"""
-                        Previous SQL was INVALID.
-
-                        Error:
-                        {error_message}
-
-                        KEY FIXES BASED ON ERROR:
-                        IF ERROR: "Subquery returns more than 1 row"
-                        → Use INNER JOIN instead of subquery
-                        
-                        IF ERROR: "Unknown column" or "Ambiguous column"
-                        → Always use table.column format (e.g., c.cooperative_state, NOT state)
-                        → Check which table has the column: 
-                            - cooperative.cooperative_state (for cooperatives)
-                            - member.member_state (for members)
-                            - director.director_state (for directors)
-                        
-                        IF QUESTION ABOUT: "{question}"
-                        
-                        FOR "HOW MANY [THING] IN [LOCATION]" QUESTIONS:
-                        - Always include the COUNT in the SELECT
-                        - CRITICAL: State names in database use UNDERSCORES not SPACES!
-                        - User input: 'Western Bahr el Ghazal' (spaces)
-                        - Database: 'Western_Bahr_el_Ghazal' (underscores)
-                        - CORRECT: SELECT COUNT(*) FROM cooperative WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
-                        - OR: SELECT COUNT(*) FROM cooperative WHERE LOWER(REPLACE(cooperative_state, '_', ' ')) = LOWER('Western Bahr el Ghazal')
-                        - WRONG: WHERE LOWER(cooperative_state) = LOWER('Western Bahr el Ghazal') (spaces don't match underscores!)
-                        
-                        FOR "WHICH [LOCATION] HAS THE MOST [THINGS]" QUESTIONS:
-                        - Use GROUP BY with the location column
-                        - ORDER BY COUNT descending  
-                        - CONVERT underscores to spaces for display:
-                        - CORRECT: SELECT REPLACE(c.cooperative_state, '_', ' ') AS state, COUNT(*) AS count FROM cooperative c GROUP BY c.cooperative_state ORDER BY count DESC LIMIT 1
-                        - This will return 'Western Bahr el Ghazal' instead of 'Western_Bahr_el_Ghazal'
-                        
-                        RULES FOR LOCATION-BASED QUERIES:
-                        1. Always use full table.column format (c.cooperative_state)
-                        2. For matching user input to database: use REPLACE to convert spaces ↔ underscores
-                        3. For aggregations, GROUP BY the location column
-                        4. Always include COUNT(*) or COUNT(id) to get the number
-                        5. ALWAYS use REPLACE() when comparing with user-provided location names
-                        
-                        COMPLETE VALID COLUMNS (use table.column format):
-                        cooperative: c.cooperative_id, c.cooperative_name, c.cooperative_type, c.cooperative_state, 
-                                     c.cooperative_county, c.cooperative_payam, c.cooperative_boma
-                        
-                        member: m.member_id, m.cooperative_id, m.member_name, m.member_gender, m.member_state, 
-                                m.member_county, m.member_payam, m.member_boma
-                        
-                        director: d.director_id, d.cooperative_id, d.director_name, d.director_gender, d.director_state,
-                                  d.director_county, d.director_payam, d.director_boma
-
-                        Original question:
-                        {question}
-                    """
+                else SQL_RETRY_PROMPT.format(
+                    error_message=error_message, 
+                    question=question
+                )
             }
         )
 
@@ -458,30 +308,8 @@ def answer_user_query(question: str) -> str:
     if not response or response.strip() == "" or response.strip() == "0 rows in set":
         prompt = ChatPromptTemplate.from_messages(
             [
-                (
-                    "system",
-                    """You are answering a user's question when the database returned no results.
-
-                    RULES:
-                    - Do NOT say 'No data found'
-                    - Provide a natural explanation
-                    - Keep answer to 1-2 sentences
-                    - Do NOT mention SQL
-                    """
-                ),
-                (
-                    "human",
-                    f"""
-                    Context:
-                    {context}
-
-                    User Question:
-                    {question}
-
-                    Database returned no results.
-                    Generate explanation:
-                    """
-                ),
+                ("system", NO_RESULTS_SYSTEM_PROMPT),
+                ("human", NO_RESULTS_HUMAN_TEMPLATE.format(context=context, question=question)),
             ]
         )
 
@@ -500,32 +328,12 @@ def answer_user_query(question: str) -> str:
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            (
-                "system",
-                """You answer questions using database results and context.
-
-                RULES:
-                - One sentence only
-                - Include numbers if present
-                - Do NOT mention SQL
-                - Keep under 30 words
-                """
-            ),
-            (
-                "human",
-                f"""
-                Context:
-                {context}
-
-                Question:
-                {question}
-
-                SQL Result:
-                {response}
-
-                Answer:
-                """
-            ),
+            ("system", NATURAL_ANSWER_SYSTEM_PROMPT),
+            ("human", NATURAL_ANSWER_HUMAN_TEMPLATE.format(
+                context=context, 
+                question=question, 
+                response=response
+            )),
         ]
     )
 
@@ -560,34 +368,65 @@ def detect_lan_and_translate(state: State, llm):
 
 # Intent detection
 def detect_intent(state: State, llm):
-    prompt = f"Classify the intent into one of: {list(INTENT_MAP.keys())}\nQuestion: {state['question']}"
+    """
+    Detect intent using rule-based first, fallback to LLM.
+    Returns canonical intent or 'unknown'.
+    """
+    question = state["question"].lower()
     
-    # Get the raw response object
-    response = llm.invoke([HumanMessage(content=prompt)])
-    
-    # FIX: Safely extract the content whether it's a string or a list of blocks
+    # Check for visualization keywords first
+    viz_aliases = INTENT_MAP.get("visualize", [])
+    if any(alias.lower() in question for alias in viz_aliases):
+        return {"intent": "visualize"}
+
+    # 1. Rule-based first
+    for canonical, aliases in INTENT_MAP.items():
+        if any(alias.lower() in question for alias in aliases):
+            return {"intent": canonical}
+
+    # 2. Fallback to LLM
+    # prompt = f"Classify the intent into one of: {list(INTENT_MAP.keys())}\nQuestion: {state['question']}"
+    # response = llm.invoke([HumanMessage(content=prompt)])
+    prompt_text = INTENT_FALLBACK_PROMPT.format(
+        intents=list(INTENT_MAP.keys()), 
+        question=state['question']
+    )
+    response = llm.invoke([HumanMessage(content=prompt_text)])
+
+    # 3. Safely extract LLM output
     content = response.content
     if isinstance(content, list):
-        # Extract text from the first content block
         first_part = content[0]
         if isinstance(first_part, dict):
-            raw_intent = first_part.get('text', '')
+            raw_intent = first_part.get("text", "")
         else:
-            raw_intent = getattr(first_part, 'text', str(first_part))
+            raw_intent = getattr(first_part, "text", str(first_part))
     else:
-        # It's a normal string
         raw_intent = str(content)
 
     raw_intent = raw_intent.strip().lower()
 
+    # 4. Map LLM output to canonical intent
     for canonical, aliases in INTENT_MAP.items():
         if any(alias.lower() in raw_intent for alias in aliases):
             return {"intent": canonical}
+
+    # 5. Fallback if no match
     return {"intent": "unknown"}
 
 # Data selection
 def select_data(state: State):
-    if state["intent"] in {"system_info", "system_name"}:
+    question = state["question"].lower()
+
+    if "name of this system" in question or "what is the name of this system" in question:
+        return {"answer": "The system is called Co-op Magic."}
+
+    intent = state["intent"]
+
+    if intent == "system_name":
+        return {"answer": "The system is called Co-op Magic."}
+
+    if intent == "system_info":
         return {"answer": "Co-op Magic is a comprehensive system designed to manage cooperatives' data across South Sudan securely and efficiently."}
 
     if state["intent"] == "visualize":
@@ -616,12 +455,26 @@ def run_query_df(query: str) -> pd.DataFrame:
     return pd.read_sql(sql, db._engine)
 
 def detect_chart_type(question: str) -> str:
-    question_lower = question.lower()
-    if "pie" in question_lower or "pie chart" in question_lower: return "pie"
-    elif "line" in question_lower or "trend" in question_lower or "over time" in question_lower: return "line"
-    elif "histogram" in question_lower or "distribution" in question_lower: return "histogram"
-    elif "bar" in question_lower or "bar chart" in question_lower: return "bar"
-    else: return "bar"
+    q = question.lower()
+
+    chart_keywords = {
+        "pie": ["pie", "chart" "proportion", "percentage", "share"],
+        "line": ["line", "trend", "over time", "time series", "change"],
+        "histogram": ["histogram", "distribution", "frequency", "spread", "bins"],
+        "bar": ["bar", "compare", "comparison", "categories", "graph"],
+    }
+
+    scores = defaultdict(int)
+
+    for chart, keywords in chart_keywords.items():
+        for k in keywords:
+            if re.search(rf"\b{re.escape(k)}\b", q):
+                scores[chart] += 1
+
+    if not scores:
+        return "unknown"
+
+    return max(scores, key=scores.get)
 
 def visualize_node(state: State):
     df_json = state.get("viz_data")

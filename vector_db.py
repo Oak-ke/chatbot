@@ -23,6 +23,8 @@ TIMESTAMP_FILE = "vector_last_update.txt"
 
 BATCH_SIZE = 500
 BATCH_SLEEP = 15
+MAX_RETRIES = 3
+RETRY_SLEEP = 5
 
 _vector_db_instance = None
 
@@ -46,7 +48,16 @@ def clean_location(value):
         return None
     return str(value).replace("_", " ").strip()
 
-
+# Retry wrapper for embedding
+def embed_batch_with_retry(batch, embeddings):
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            return FAISS.from_documents(batch, embeddings)
+        except Exception as e:
+            logger.warning(f"Embedding failed (attempt {attempt}): {e}")
+            if attempt == MAX_RETRIES:
+                raise
+            time.sleep(RETRY_SLEEP)
 # Fetch documents
 def fetch_documents(since=None):
 
@@ -227,7 +238,7 @@ def build_vector_db():
 
         print(f"Embedding batch {i//BATCH_SIZE+1}/{total_batches}")
 
-        index = FAISS.from_documents(batch, embeddings)
+        index = embed_batch_with_retry(batch, embeddings)
 
         if _vector_db_instance is None:
             _vector_db_instance = index
@@ -296,7 +307,7 @@ def update_vector_index():
     for i in range(0, len(splits), BATCH_SIZE):
         batch = splits[i:i + BATCH_SIZE]
         logger.info(f"Embedding batch {i // BATCH_SIZE + 1}/{total_batches}...")
-        new_index = FAISS.from_documents(batch, embeddings)
+        new_index = embed_batch_with_retry(batch, embeddings)
 
         _vector_db_instance.merge_from(new_index)
 
@@ -313,12 +324,22 @@ def update_vector_index():
 
 # Public getter
 def get_vector_db():
-
     global _vector_db_instance
 
     if _vector_db_instance is None:
-        logger.info("Loading FAISS vector database...")
-        _vector_db_instance = build_vector_db()
-        logger.info("Vector DB loaded successfully.")
+        logger.info("Loading FAISS index from disk...")
+
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="gemini-embedding-001",
+            google_api_key=GOOGLE_API_KEY
+        )
+
+        _vector_db_instance = FAISS.load_local(
+            VECTOR_INDEX_PATH,
+            embeddings,
+            allow_dangerous_deserialization=True
+        )
+
+        logger.info("FAISS loaded.")
 
     return _vector_db_instance
