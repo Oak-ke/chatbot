@@ -14,7 +14,7 @@ import vector_db
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from logging_config import setup_logging
-from llm_cache import get_cached_answer, store_cached_answer
+from llm_cache import get_cached_answer, store_cached_answer, serialize_safe
 from dotenv import load_dotenv
 
 
@@ -137,6 +137,8 @@ def chat():
             "graphSvg": result.get("graph_svg"),
             "vizData": result.get("viz_data")
         }
+        
+        response = serialize_safe(response)
 
         # store only valid responses
         if response.get("answer"):

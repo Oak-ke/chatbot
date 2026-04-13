@@ -390,7 +390,7 @@ def select_data(state: State):
         answer = answer_user_query(state["question"])
         
         # Convert DataFrame to JSON for safe serialization
-        df_json = df.to_dict(orient="records")
+        df_json = df.astype(str).to_dict(orient="records")
         
         return {"viz_data": df_json, "answer": answer}
     
