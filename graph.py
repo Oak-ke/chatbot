@@ -506,7 +506,7 @@ def visualize_node(state: State):
 
     # EXTENSION: Generate PNG (High Res)
     buf_png = BytesIO()
-    fig.savefig(buf_png, format='png', dpi=300) 
+    fig.savefig(buf_png, format='png', dpi=100) 
     buf_png.seek(0)
     img_base64 = base64.b64encode(buf_png.read()).decode('utf-8')
 
