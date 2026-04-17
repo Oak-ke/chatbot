@@ -11,6 +11,7 @@ from graph import build_graph
 from llm import gemini_flash_fast  # Import the fast model for the translation route
 from utils import translate_text
 import vector_db
+from vector_db import get_similar_que, store_que_pair
 import os
 from apscheduler.schedulers.background import BackgroundScheduler
 from logging_config import setup_logging
@@ -108,6 +109,13 @@ def chat():
     if cached:
         logger.info(f"LLM CACHE HIT: {question}")
         return jsonify(cached)
+    
+    # Semantic FAISS cache
+    semantic_hit = get_similar_que(question)
+    
+    if semantic_hit:
+        logger.info("[CACHE HIT - FAISS SEMANTIC]")
+        return jsonify(semantic_hit)
 
     logger.info(f"LLM CACHE MISS: {question}")
     
@@ -139,10 +147,21 @@ def chat():
         }
         
         response = serialize_safe(response)
-
+        
+        # Skip caching visualization
+        is_viz = any([
+            response.get("graphBase64"),
+            response.get("graphSvg"),
+            response.get("vizData")
+        ])
+        
         # store only valid responses
-        if response.get("answer"):
+        if response.get("answer") and not is_viz:
             store_cached_answer(question, response)
+            store_que_pair(question, response)
+            logger.info("[CACHE STORE - TEXT ONLY, REDIS + FAISS]")
+        else:
+            logger.info("[SKIP CACHE - VISUALIZATION]")
 
         return jsonify(response)
     

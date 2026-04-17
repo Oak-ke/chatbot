@@ -25,6 +25,7 @@ BATCH_SIZE = 500
 BATCH_SLEEP = 15
 MAX_RETRIES = 3
 RETRY_SLEEP = 5
+MAX_QA_CACHE = 1000
 
 _vector_db_instance = None
 
@@ -345,5 +346,107 @@ def get_vector_db():
         )
 
         logger.info("FAISS loaded.")
+        return _vector_db_instance
+
+    # Index missing → rebuild
+    logger.warning("FAISS index missing. Rebuilding from scratch...")
+
+    _vector_db_instance = build_vector_db()
 
     return _vector_db_instance
+
+# Caching similar questions with same answers
+def store_que_pair(question: str, answer: dict):
+    global _vector_db_instance
+
+    ts = get_last_update_time()
+
+    doc = Document(
+        page_content=question,
+        metadata={
+            "type": "qa_cache",
+            "answer": answer,
+            "timestamp": ts
+        }
+    )
+
+    _vector_db_instance.add_documents([doc])
+
+    # Enforce max QA cache size
+    all_docs = _vector_db_instance.docstore._dict
+
+    qa_docs = [
+        d for d in all_docs.values()
+        if d.metadata.get("type") == "qa_cache"
+    ]
+
+    if len(qa_docs) > MAX_QA_CACHE:
+        logger.warning("QA cache limit exceeded. Rebuilding index...")
+
+        # keep latest N (simple strategy)
+        qa_docs = qa_docs[-MAX_QA_CACHE:]
+
+        # keep non-QA docs
+        non_qa_docs = [
+            d for d in all_docs.values()
+            if d.metadata.get("type") != "qa_cache"
+        ]
+
+        new_docs = non_qa_docs + qa_docs
+
+        embeddings = GoogleGenerativeAIEmbeddings(
+            model="gemini-embedding-001",
+            google_api_key=GOOGLE_API_KEY
+        )
+
+        _vector_db_instance = FAISS.from_documents(new_docs, embeddings)
+
+    _vector_db_instance.save_local(VECTOR_INDEX_PATH)
+    
+def get_similar_que(question: str, threshold: float = 0.85):
+    """
+    Safe semantic cache:
+    - strict similarity
+    - same data version
+    - no visualization reuse
+    """
+
+    global _vector_db_instance
+
+    if _vector_db_instance is None:
+        return None
+
+    results = _vector_db_instance.similarity_search_with_score(question, k=3)
+
+    if not results:
+        return None
+
+    best_doc, best_score = results[0]
+
+    # Convert distance → similarity (FAISS returns distance)
+    similarity = 1 / (1 + best_score)
+
+    if best_doc.metadata.get("type") != "qa_cache":
+        return None
+
+    if similarity < threshold:
+        logger.info(f"[FAISS SKIP] low similarity={similarity:.2f}")
+        return None
+
+    # Check timestamp
+    current_ts = get_last_update_time()
+    cached_ts = best_doc.metadata.get("timestamp")
+
+    if cached_ts != current_ts:
+        logger.info("[FAISS SKIP] stale cache")
+        return None
+
+    answer = best_doc.metadata.get("answer")
+
+    # Never return visualization
+    if not answer or answer.get("graphBase64"):
+        return None
+
+    logger.info(f"[FAISS HIT] similarity={similarity:.2f}")
+
+    return answer
