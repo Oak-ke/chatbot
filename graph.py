@@ -384,7 +384,7 @@ def select_data(state: State):
     if intent == "system_info":
         return {"answer": "Co-op Magic is a comprehensive system designed to manage cooperatives' data across South Sudan securely and efficiently."}
 
-    if state["intent"] == "visualize":
+    if intent == "visualize":
         sql = generate_valid_sql(state["question"], llm_pro)
         df = run_query_df(sql)
         answer = answer_user_query(state["question"])
