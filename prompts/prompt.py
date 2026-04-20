@@ -30,6 +30,11 @@ SQL_SYSTEM_PROMPT = """You are an expert SQL generator for a MySQL cooperative d
                     - Normalize member_gender values ('f','female','m','male')
                     - ALWAYS use CASE normalization before COUNT or GROUP BY
     
+                    CRITICAL FOR APPROVAL STATUS:
+                    - The approval_status column has specific values: 'Approved', 'Denied', 'Pending', 'Submitted', 'Deregistered'
+                    - When asked for "approval status of all types" or "breakdown of status":
+                    → SELECT approval_status, COUNT(*) as count FROM cooperative GROUP BY approval_status
+  
                     If you use ANY table other than the 6 listed, your output is INVALID.
                     CRITICAL: This database has ONLY 6 TABLES:
                     1. cooperative
@@ -142,6 +147,11 @@ SQL_HUMAN_TEMPLATE = """
 
         - When counting male/female → ALWAYS use GROUP BY normalized gender
     
+        CRITICAL FOR APPROVAL STATUS
+        - "approval status of all types" → SELECT approval_status, COUNT(*) AS count FROM cooperative GROUP BY approval_status
+        - "how many cooperatives are pending" → SELECT COUNT(*) FROM cooperative WHERE LOWER(approval_status) = 'pending'
+        - "graph of cooperative statuses" → SELECT approval_status, COUNT(*) AS count FROM cooperative GROUP BY approval_status
+
         Use REPLACE to convert spaces to underscores in comparison:
         - CORRECT: WHERE LOWER(cooperative_state) = LOWER(REPLACE('Western Bahr el Ghazal', ' ', '_'))
         OR normalize the column:
