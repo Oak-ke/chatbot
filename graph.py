@@ -449,6 +449,13 @@ def visualize_node(state: State):
     if not isinstance(df, pd.DataFrame) or df.empty or len(df.columns) < 2:
         logger.warning("Dataframe is empty or lacks sufficient columns for visualization")
         return {"graph_base64": None, "graph_svg": None}
+    
+    # Detect numeric column safely
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    if not numeric_cols:
+        logger.warning("No numeric columns available for plotting")
+        return {"graph_base64": None, "graph_svg": None}
+    y_col = numeric_cols[0]
 
     if len(df.columns) >= 1:
         gender_col = df.columns[0]
@@ -461,53 +468,92 @@ def visualize_node(state: State):
                 else: return val.capitalize()
             
             df[gender_col] = df[gender_col].apply(normalize_gender)
-            df = df.groupby(gender_col)[df.columns[1]].sum().reset_index()
+            df = df.groupby(gender_col)[y_col].sum().reset_index()
 
     chart_type = detect_chart_type(state.get("question", ""))
-    
+
     # FIXED: Use Object-Oriented API to ensure Thread Safety
     fig, ax = plt.subplots(figsize=(10, 6))
-    
+
+    # Grouped pivot for 3+ columns
+    if len(df.columns) >= 3:
+        try:
+            df = df.pivot(
+                index=df.columns[0],
+                columns=df.columns[1],
+                values=y_col
+            )
+        except Exception as e:
+            logger.warning(f"Pivot failed: {e}")
+
     if chart_type == "pie":
         colors = ['#FF6B6B', '#4ECDC4', "#BCD145", '#FFA07A', '#98D8C8', '#F7DC6F']
+        
+        if y_col in df.columns:
+            values = df[y_col]
+            labels = df[df.columns[0]]
+        else:
+            values = df.iloc[:, 0]
+            labels = df.index
+
         _, texts, autotexts = ax.pie(
-            df[df.columns[1]], labels=df[df.columns[0]], autopct='%1.1f%%',
-            colors=colors, startangle=90, textprops={'fontsize': 13, 'weight': 'bold'}
+            values,
+            labels=labels,
+            autopct='%1.1f%%',
+            colors=colors,
+            startangle=90,
+            textprops={'fontsize': 13, 'weight': 'bold'}
         )
-        ax.set_title(f'{df.columns[1]} Distribution', fontsize=16, fontweight='bold', pad=20)
-        for autotext in autotexts: autotext.set_color('white')
-            
+        ax.set_title(f'{y_col} Distribution', fontsize=16, fontweight='bold', pad=20)
+        for autotext in autotexts:
+            autotext.set_color('white')
+
     elif chart_type == "line":
-        ax.plot(df[df.columns[0]], df[df.columns[1]], marker='o', linewidth=2, markersize=8, color='steelblue')
+        if y_col in df.columns:
+            x_vals = df[df.columns[0]]
+            values = df[y_col]
+        else:
+            x_vals = df.index
+            values = df.iloc[:, 0]
+
+        ax.plot(x_vals, values, marker='o', linewidth=2, markersize=8, color='steelblue')
         ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
-        ax.set_ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        ax.set_ylabel(y_col, fontsize=13, fontweight='bold')
         ax.set_title('Data Trend', fontsize=13, fontweight='bold')
         ax.tick_params(axis='x', rotation=45, labelsize=12)
         ax.grid(True, alpha=0.3)
-        
+
     elif chart_type == "histogram":
-        ax.hist(df[df.columns[0]], bins=10, color='steelblue', edgecolor='black', alpha=0.7)
-        ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
+        values = df[y_col]
+        ax.hist(values, bins=10, color='steelblue', edgecolor='black', alpha=0.7)
+        ax.set_xlabel(y_col, fontsize=13, fontweight='bold')
         ax.set_ylabel('Frequency', fontsize=13, fontweight='bold')
         ax.set_title('Distribution Histogram', fontsize=16, fontweight='bold', pad=20)
         ax.tick_params(axis='x', rotation=45, labelsize=12)
-        
+
     else:
-        df.plot(kind='bar', x=df.columns[0], y=df.columns[1], legend=False, color='steelblue', ax=ax)
+        if y_col in df.columns:
+            df.plot(kind='bar', x=df.columns[0], y=y_col, legend=False, color='steelblue', ax=ax)
+            values = df[y_col]
+        else:
+            df.plot(kind='bar', legend=False, color='steelblue', ax=ax)
+            values = df.iloc[:, 0]
+
         ax.set_xlabel(df.columns[0], fontsize=13, fontweight='bold')
-        ax.set_ylabel(df.columns[1], fontsize=13, fontweight='bold')
+        ax.set_ylabel(y_col, fontsize=13, fontweight='bold')
         ax.set_title('Data Distribution', fontsize=13, fontweight='bold')
         ax.tick_params(axis='x', rotation=45)
+
         # Fix label iteration to avoid math errors if max is 0
-        y_max = max(df[df.columns[1]]) if not df[df.columns[1]].empty else 1
-        for i, v in enumerate(df[df.columns[1]]):
+        y_max = values.max() if not values.empty else 1
+        for i, v in enumerate(values):
             ax.text(i, v + (y_max * 0.02), str(v), ha='center', va='bottom', fontweight='bold')
-    
+
     fig.tight_layout()
 
     # EXTENSION: Generate PNG (High Res)
     buf_png = BytesIO()
-    fig.savefig(buf_png, format='png', dpi=100) 
+    fig.savefig(buf_png, format='png', dpi=100)
     buf_png.seek(0)
     img_base64 = base64.b64encode(buf_png.read()).decode('utf-8')
 
@@ -517,7 +563,7 @@ def visualize_node(state: State):
     buf_svg.seek(0)
     svg_string = buf_svg.read().decode('utf-8')
 
-    plt.close(fig) # Safely close specific figure to prevent memory leak
+    plt.close(fig)  # Safely close specific figure to prevent memory leak
 
     return {"graph_base64": img_base64, "graph_svg": svg_string}
 
