@@ -394,7 +394,8 @@ def select_data(state: State):
         
         return {"viz_data": df_json, "answer": answer}
     
-    return {"answer": answer_user_query(state["question"])}
+    # For all other intents (including "unknown"), generate text only and reset viz fields
+    return {"answer": answer_user_query(state["question"]), "viz_data": None, "graph_base64": None, "graph_svg": None}
 
 # UPDATED: generate_answer now routes viz_data and graph_svg to the output
 def generate_answer(state: State):

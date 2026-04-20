@@ -110,12 +110,17 @@ def chat():
         logger.info(f"LLM CACHE HIT: {question}")
         return jsonify(cached)
     
-    # Semantic FAISS cache
-    semantic_hit = get_similar_que(question)
+    # Pre-check: Skip semantic cache for questions likely needing visualizations
+    viz_keywords = ["graph", "chart", "show", "visualize", "plot", "display", "diagram"]
+    is_viz_intent = any(keyword in question.lower() for keyword in viz_keywords)
     
-    if semantic_hit:
-        logger.info("[CACHE HIT - FAISS SEMANTIC]")
-        return jsonify(semantic_hit)
+    if not is_viz_intent:
+        # Semantic FAISS cache (only for text-intent questions)
+        semantic_hit = get_similar_que(question)
+    
+        if semantic_hit:
+            logger.info("[CACHE HIT - FAISS SEMANTIC]")
+            return jsonify(semantic_hit)
 
     logger.info(f"LLM CACHE MISS: {question}")
     
