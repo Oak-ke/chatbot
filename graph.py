@@ -1,6 +1,12 @@
 import re
 import os
 import logging
+import hashlib
+import base64
+import json
+import matplotlib
+matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
+import matplotlib.pyplot as plt
 import pandas as pd
 from langgraph.graph import StateGraph
 from typing import TypedDict, Optional
@@ -12,15 +18,10 @@ from langchain_community.utilities import SQLDatabase
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langgraph.checkpoint.memory import MemorySaver
-import base64
 from io import BytesIO
 from dotenv import load_dotenv
-import matplotlib
-matplotlib.use("agg") # This for headless plot graphs(Use before pyplot import)
-import matplotlib.pyplot as plt
 from vector_db import get_vector_db
 from cache import vector_cache, redis_client 
-import json
 from logging_config import setup_logging
 from collections import defaultdict
 from prompts.prompt import (
