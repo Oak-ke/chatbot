@@ -70,11 +70,11 @@ INTENT_MAP = {
         "explain this system",
         "system info"
     ],
-    "cooperatives_total": ["number of cooperatives", "total cooperatives"],
+    "cooperatives_total": ["number of cooperatives", "total cooperatives", "cooperatives in system", "cooperatives in coopmagic"],
     "members_total": ["total members", "number of members", "members"],
     "members_by_state": ["members per state", "members by state"],
-    "female_members": ["female members"],
-    "male_members": ["male members"],
+    "female_members": ["female members", "women members", "women"],
+    "male_members": ["male members", "men members", "men"],
     "directors_total": ["directors", "total directors"],
     "approval_summary": ["approval status", "status of cooperatives", "how many are approved", "approval breakdown", "approval status of all types"],
     "visualize": ["visualize", "graph", "chart", "show trend", "pie chart", "bar chart", "line"]
@@ -107,7 +107,6 @@ cached_schema_string = None
 def get_schema(_):
     global cached_schema_string
     if cached_schema_string is None:
-        logger.info("[SCHEMA CACHE MISS] Fetching fresh schema from database...")
         cached_schema_string = db.get_table_info(table_names=ALLOWED_TABLES)
     return cached_schema_string
 
