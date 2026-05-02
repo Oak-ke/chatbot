@@ -1,7 +1,6 @@
 (function() {
     // 1. Hardcode your backend URL.
     const API_BASE = "https://ai.co-opmagic.org";
-
     // 2. Inject Modern Scoped CSS
     const styles = `
       #coop-magic-widget { 
